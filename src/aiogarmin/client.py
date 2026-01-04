@@ -7,7 +7,6 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .const import (
-    ACTIVITIES_BY_DATE_URL,
     ACTIVITIES_URL,
     ACTIVITY_DETAILS_URL,
     ACTIVITY_TYPES_URL,
@@ -187,10 +186,13 @@ class GarminClient:
         self, start_date: date, end_date: date
     ) -> list[dict[str, Any]]:
         """Get activities in a date range."""
-        url = (
-            f"{ACTIVITIES_BY_DATE_URL}/{start_date.isoformat()}/{end_date.isoformat()}"
-        )
-        data = await self._request("GET", url)
+        params = {
+            "startDate": start_date.isoformat(),
+            "endDate": end_date.isoformat(),
+            "start": 0,
+            "limit": 100,
+        }
+        data = await self._request("GET", ACTIVITIES_URL, params=params)
         return data if isinstance(data, list) else []
 
     async def get_activity_details(
@@ -263,8 +265,11 @@ class GarminClient:
         if target_date is None:
             target_date = date.today()
 
-        url = f"{BODY_BATTERY_URL}/{target_date.isoformat()}"
-        data = await self._request("GET", url)
+        params = {
+            "startDate": target_date.isoformat(),
+            "endDate": target_date.isoformat(),
+        }
+        data = await self._request("GET", BODY_BATTERY_URL, params=params)
         if isinstance(data, dict):
             readings = data.get("bodyBatteryValuesArray", [])
             return [BodyBattery.model_validate(item) for item in readings]

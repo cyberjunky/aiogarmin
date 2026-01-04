@@ -22,7 +22,9 @@ ACTIVITY_TYPES_URL = f"{GARMIN_CONNECT_API}/activity-service/activity/activityTy
 WORKOUTS_URL = f"{GARMIN_CONNECT_API}/workout-service/workouts"
 
 # Wellness endpoints
-BODY_BATTERY_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/bodyBattery"
+BODY_BATTERY_URL = (
+    f"{GARMIN_CONNECT_API}/wellness-service/wellness/bodyBattery/reports/daily"
+)
 HRV_URL = f"{GARMIN_CONNECT_API}/hrv-service/hrv"
 SLEEP_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailySleepData"
 STRESS_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailyStress"
@@ -30,7 +32,7 @@ HYDRATION_URL = f"{GARMIN_CONNECT_API}/usersummary-service/usersummary/hydration
 DAILY_STEPS_URL = f"{GARMIN_CONNECT_API}/usersummary-service/stats/steps/daily"
 
 # Body composition endpoints
-BODY_COMPOSITION_URL = f"{GARMIN_CONNECT_API}/weight-service/weight/dateRange"
+BODY_COMPOSITION_URL = f"{GARMIN_CONNECT_API}/weight-service/weight/range"
 
 # Fitness/Training endpoints
 TRAINING_READINESS_URL = (
@@ -51,7 +53,7 @@ DEVICES_URL = f"{GARMIN_CONNECT_API}/device-service/deviceregistration/devices"
 DEVICE_ALARMS_URL = f"{GARMIN_CONNECT_API}/device-service/devices/alarms"
 
 # Goals & Gamification endpoints
-GOALS_URL = f"{GARMIN_CONNECT_API}/goal-service/goals"
+GOALS_URL = f"{GARMIN_CONNECT_API}/goal-service/goal/goals"
 BADGES_URL = f"{GARMIN_CONNECT_API}/badge-service/badge/earned"
 
 # Gear endpoints
