@@ -8,22 +8,60 @@ GARMIN_SSO_MFA = f"{GARMIN_SSO_URL}/verifyMFA/loginEnterMfaCode"
 # Garmin Connect API URLs (using connectapi.garmin.com like garth does)
 GARMIN_CONNECT_API = "https://connectapi.garmin.com"
 
-# API endpoints (based on python-garminconnect library)
+# User/Profile endpoints
 USER_PROFILE_URL = f"{GARMIN_CONNECT_API}/userprofile-service/socialProfile"
 USER_SUMMARY_URL = f"{GARMIN_CONNECT_API}/usersummary-service/usersummary/daily"
+
+# Activity endpoints
 ACTIVITIES_URL = (
     f"{GARMIN_CONNECT_API}/activitylist-service/activities/search/activities"
 )
+ACTIVITIES_BY_DATE_URL = f"{GARMIN_CONNECT_API}/activitylist-service/activities/byDate"
 ACTIVITY_DETAILS_URL = f"{GARMIN_CONNECT_API}/activity-service/activity"
+ACTIVITY_TYPES_URL = f"{GARMIN_CONNECT_API}/activity-service/activity/activityTypes"
+WORKOUTS_URL = f"{GARMIN_CONNECT_API}/workout-service/workouts"
 
 # Wellness endpoints
 BODY_BATTERY_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/bodyBattery"
 HRV_URL = f"{GARMIN_CONNECT_API}/hrv-service/hrv"
 SLEEP_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailySleepData"
 STRESS_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailyStress"
+HYDRATION_URL = f"{GARMIN_CONNECT_API}/usersummary-service/usersummary/hydration/daily"
+DAILY_STEPS_URL = f"{GARMIN_CONNECT_API}/usersummary-service/stats/steps/daily"
+
+# Body composition endpoints
+BODY_COMPOSITION_URL = f"{GARMIN_CONNECT_API}/weight-service/weight/dateRange"
+
+# Fitness/Training endpoints
+TRAINING_READINESS_URL = (
+    f"{GARMIN_CONNECT_API}/metrics-service/metrics/trainingreadiness"
+)
+TRAINING_STATUS_URL = (
+    f"{GARMIN_CONNECT_API}/metrics-service/metrics/trainingstatus/aggregated"
+)
+ENDURANCE_SCORE_URL = f"{GARMIN_CONNECT_API}/metrics-service/metrics/endurancescore"
+HILL_SCORE_URL = f"{GARMIN_CONNECT_API}/metrics-service/metrics/hillscore"
+FITNESS_AGE_URL = f"{GARMIN_CONNECT_API}/fitnessage-service/fitnessage"
+LACTATE_THRESHOLD_URL = (
+    f"{GARMIN_CONNECT_API}/biometric-service/biometric/lactatethreshold"
+)
 
 # Device endpoints
 DEVICES_URL = f"{GARMIN_CONNECT_API}/device-service/deviceregistration/devices"
+DEVICE_ALARMS_URL = f"{GARMIN_CONNECT_API}/device-service/devices/alarms"
+
+# Goals & Gamification endpoints
+GOALS_URL = f"{GARMIN_CONNECT_API}/goal-service/goals"
+BADGES_URL = f"{GARMIN_CONNECT_API}/badge-service/badge/earned"
+
+# Gear endpoints
+GEAR_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/all"
+GEAR_STATS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/stats"
+GEAR_DEFAULTS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/defaults"
+
+# Health endpoints
+BLOOD_PRESSURE_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure/range"
+MENSTRUAL_URL = f"{GARMIN_CONNECT_API}/menstrualcycle-service/cycle"
 
 # Default headers
 DEFAULT_HEADERS = {

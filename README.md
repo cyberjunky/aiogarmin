@@ -48,7 +48,12 @@ This library is designed to work with Home Assistant's websession:
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 session = async_get_clientsession(hass)
-auth = GarminAuth(session, oauth1_token=stored_token1, oauth2_token=stored_token2)
+
+# Load stored token dicts from config entry
+oauth1_token = entry.data.get("oauth1_token")  # dict with oauth_token, oauth_token_secret, etc.
+oauth2_token = entry.data.get("oauth2_token")  # dict with access_token, refresh_token, etc.
+
+auth = GarminAuth(session, oauth1_token=oauth1_token, oauth2_token=oauth2_token)
 client = GarminClient(session, auth)
 ```
 
