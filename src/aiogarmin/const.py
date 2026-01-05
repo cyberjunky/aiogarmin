@@ -56,7 +56,7 @@ DEVICES_URL = f"{GARMIN_CONNECT_API}/device-service/deviceregistration/devices"
 DEVICE_ALARMS_URL = f"{GARMIN_CONNECT_API}/device-service/devices/alarms"
 
 # Respiration and SPO2 endpoints
-RESPIRATION_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailyRespiration"
+RESPIRATION_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/daily/respiration"
 SPO2_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailySpo2"
 
 # Activity Types endpoint
@@ -67,13 +67,21 @@ GOALS_URL = f"{GARMIN_CONNECT_API}/goal-service/goal/goals"
 BADGES_URL = f"{GARMIN_CONNECT_API}/badge-service/badge/earned"
 
 # Gear endpoints
-GEAR_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/all"
+GEAR_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/filterGear"
 GEAR_STATS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/stats"
-GEAR_DEFAULTS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/defaults"
+GEAR_DEFAULTS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/user"
+GEAR_TYPES_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/types"
 
 # Health endpoints
 BLOOD_PRESSURE_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure/range"
-MENSTRUAL_URL = f"{GARMIN_CONNECT_API}/menstrualcycle-service/cycle"
+BLOOD_PRESSURE_SET_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure"
+WEIGHT_URL = f"{GARMIN_CONNECT_API}/weight-service/user-weight"
+MENSTRUAL_URL = f"{GARMIN_CONNECT_API}/periodichealth-service/menstrualcycle/dayview"
+
+# Upload/Write endpoints
+UPLOAD_URL = f"{GARMIN_CONNECT_API}/upload-service/upload"
+ACTIVITY_CREATE_URL = f"{GARMIN_CONNECT_API}/activity-service/activity"
+GEAR_LINK_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/link"
 
 # Default headers
 DEFAULT_HEADERS = {
