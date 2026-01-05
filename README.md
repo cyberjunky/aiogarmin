@@ -4,11 +4,12 @@ Async Python client for Garmin Connect API, designed for Home Assistant integrat
 
 ## Features
 
-- Fully async using aiohttp
-- Supports MFA authentication
-- Token-based auth (no stored credentials)
-- Websession injection for Home Assistant compatibility
-- Pydantic models for API responses
+- **Fully async** using aiohttp
+- **MFA authentication** support
+- **Token-based auth** - credentials used once, then tokens stored
+- **Websession injection** for Home Assistant compatibility
+- **Retry with backoff** for rate limits (429) and server errors (5xx)
+- **Midnight fallback** - automatically uses yesterday's data when today isn't ready yet
 
 ## Installation
 
@@ -33,11 +34,16 @@ async with aiohttp.ClientSession() as session:
         result = await auth.complete_mfa(mfa_code)
     
     # Save tokens for future use
-    tokens = result.tokens
+    oauth1_token = auth.oauth1_token  # dict
+    oauth2_token = auth.oauth2_token  # dict
     
     # Use client for API calls
     client = GarminClient(session, auth)
-    summary = await client.get_user_summary()
+    
+    # get_data() returns flat dict with all data for sensors
+    data = await client.get_data()
+    print(data["totalSteps"])
+    print(data["restingHeartRate"])
 ```
 
 ## For Home Assistant
@@ -50,20 +56,39 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 session = async_get_clientsession(hass)
 
 # Load stored token dicts from config entry
-oauth1_token = entry.data.get("oauth1_token")  # dict with oauth_token, oauth_token_secret, etc.
-oauth2_token = entry.data.get("oauth2_token")  # dict with access_token, refresh_token, etc.
+oauth1_token = entry.data.get("oauth1_token")
+oauth2_token = entry.data.get("oauth2_token")
 
 auth = GarminAuth(session, oauth1_token=oauth1_token, oauth2_token=oauth2_token)
 client = GarminClient(session, auth)
+
+# Get all data in flat format for sensors
+data = await client.get_data(timezone="Europe/Amsterdam")
 ```
+
+## API Methods
+
+All methods return raw `dict` or `list[dict]`:
+
+| Method | Description |
+|--------|-------------|
+| `get_data()` | All data in flat dict (recommended for HA) |
+| `get_user_summary()` | Daily summary (steps, calories, HR) |
+| `get_activities()` | Recent activities |
+| `get_sleep_data()` | Sleep metrics |
+| `get_stress_data()` | Stress levels |
+| `get_hrv_data()` | Heart rate variability |
+| `get_body_battery()` | Body battery levels |
+| `get_training_readiness()` | Training readiness |
+| `get_devices()` | Connected devices |
 
 ## Acknowledgements
 
 This library is inspired by and builds upon great work from:
 
-- **[garth](https://github.com/matin/garth)** by [@matin](https://github.com/matin) - Garmin SSO auth + Connect Python client
+Matin's **[garth](https://github.com/matin/garth)** - Garmin SSO auth + Connect Python client
 
-Special thanks to Matin for reverse-engineering the Garmin Connect authentication flow and making it available to the community.
+Special thanks to him for the Garmin Connect authentication flow and making it available to the community.
 
 ## License
 

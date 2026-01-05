@@ -38,6 +38,9 @@ BODY_COMPOSITION_URL = f"{GARMIN_CONNECT_API}/weight-service/weight/range"
 TRAINING_READINESS_URL = (
     f"{GARMIN_CONNECT_API}/metrics-service/metrics/trainingreadiness"
 )
+MORNING_TRAINING_READINESS_URL = (
+    f"{GARMIN_CONNECT_API}/metrics-service/metrics/trainingreadiness/report"
+)
 TRAINING_STATUS_URL = (
     f"{GARMIN_CONNECT_API}/metrics-service/metrics/trainingstatus/aggregated"
 )
@@ -45,12 +48,19 @@ ENDURANCE_SCORE_URL = f"{GARMIN_CONNECT_API}/metrics-service/metrics/endurancesc
 HILL_SCORE_URL = f"{GARMIN_CONNECT_API}/metrics-service/metrics/hillscore"
 FITNESS_AGE_URL = f"{GARMIN_CONNECT_API}/fitnessage-service/fitnessage"
 LACTATE_THRESHOLD_URL = (
-    f"{GARMIN_CONNECT_API}/biometric-service/biometric/lactatethreshold"
+    f"{GARMIN_CONNECT_API}/biometric-service/biometric/latestLactateThreshold"
 )
 
 # Device endpoints
 DEVICES_URL = f"{GARMIN_CONNECT_API}/device-service/deviceregistration/devices"
 DEVICE_ALARMS_URL = f"{GARMIN_CONNECT_API}/device-service/devices/alarms"
+
+# Respiration and SPO2 endpoints
+RESPIRATION_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailyRespiration"
+SPO2_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailySpo2"
+
+# Activity Types endpoint
+ACTIVITY_TYPES_URL = f"{GARMIN_CONNECT_API}/activity-service/activity/activityTypes"
 
 # Goals & Gamification endpoints
 GOALS_URL = f"{GARMIN_CONNECT_API}/goal-service/goal/goals"
