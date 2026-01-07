@@ -10,11 +10,9 @@ from .const import (
     ACTIVITIES_URL,
     ACTIVITY_CREATE_URL,
     ACTIVITY_DETAILS_URL,
-    ACTIVITY_TYPES_URL,
     BADGES_URL,
     BLOOD_PRESSURE_SET_URL,
     BLOOD_PRESSURE_URL,
-    BODY_BATTERY_URL,
     BODY_COMPOSITION_URL,
     DAILY_STEPS_URL,
     DEFAULT_HEADERS,
@@ -27,7 +25,6 @@ from .const import (
     GEAR_DEFAULTS_URL,
     GEAR_LINK_URL,
     GEAR_STATS_URL,
-    GEAR_TYPES_URL,
     GEAR_URL,
     GOALS_URL,
     HILL_SCORE_URL,
@@ -40,7 +37,6 @@ from .const import (
     RESPIRATION_URL,
     SLEEP_URL,
     SPO2_URL,
-    STRESS_URL,
     TRAINING_READINESS_URL,
     TRAINING_STATUS_URL,
     UPLOAD_URL,
@@ -541,11 +537,6 @@ class GarminClient:
         data = await self._request("GET", url)
         return data.get("totalAverage", {}) if isinstance(data, dict) else {}
 
-    async def get_activities(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent activities."""
-        params = {"limit": limit, "start": 0}
-        data = await self._request("GET", ACTIVITIES_URL, params=params)
-        return data if isinstance(data, list) else []
 
     async def get_activities_by_date(
         self, start_date: date, end_date: date
@@ -582,11 +573,6 @@ class GarminClient:
         return data if isinstance(data, list) else []
 
 
-    async def get_activity_types(self) -> list[dict[str, Any]]:
-        """Get available activity types."""
-        data = await self._request("GET", ACTIVITY_TYPES_URL)
-        return data if isinstance(data, list) else []
-
     async def get_workouts(
         self, start: int = 0, limit: int = 10
     ) -> list[dict[str, Any]]:
@@ -597,27 +583,6 @@ class GarminClient:
             return data.get("workouts", [])
         return data if isinstance(data, list) else []
 
-    async def get_sleep_data(self, target_date: date | None = None) -> dict[str, Any]:
-        """Get sleep data for a date."""
-        if target_date is None:
-            target_date = date.today()
-
-        profile = await self.get_user_profile()
-        url = f"{SLEEP_URL}/{profile.display_name}"
-        params = {"date": target_date.isoformat(), "nonSleepBufferMinutes": 60}
-        data = await self._request("GET", url, params=params)
-        return data if isinstance(data, dict) else {}
-
-    async def get_stress_data(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
-        """Get stress data for a date."""
-        if target_date is None:
-            target_date = date.today()
-
-        url = f"{STRESS_URL}/{target_date.isoformat()}"
-        data = await self._request("GET", url)
-        return data if isinstance(data, dict) else {}
 
     async def get_hrv_data(self, target_date: date | None = None) -> dict[str, Any]:
         """Get HRV data for a date."""
@@ -628,19 +593,6 @@ class GarminClient:
         data = await self._request("GET", url)
         return data if isinstance(data, dict) else {}
 
-    async def get_body_battery(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
-        """Get body battery data for a date."""
-        if target_date is None:
-            target_date = date.today()
-
-        params = {
-            "startDate": target_date.isoformat(),
-            "endDate": target_date.isoformat(),
-        }
-        data = await self._request("GET", BODY_BATTERY_URL, params=params)
-        return data if isinstance(data, dict) else {}
 
     async def get_hydration_data(
         self, target_date: date | None = None
@@ -741,11 +693,6 @@ class GarminClient:
         """Get default gear settings."""
         url = f"{GEAR_DEFAULTS_URL}/{user_profile_id}/activityTypes"
         data = await self._request("GET", url)
-        return data if isinstance(data, list) else []
-
-    async def get_gear_types(self) -> list[dict[str, Any]]:
-        """Get all gear types (Shoes, Bike, etc.)."""
-        data = await self._request("GET", GEAR_TYPES_URL)
         return data if isinstance(data, list) else []
 
     async def get_blood_pressure(
