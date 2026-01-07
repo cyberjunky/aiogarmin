@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs
 
 from .exceptions import GarminAuthError, GarminMFARequired
@@ -34,8 +34,8 @@ class GarminAuth:
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        oauth1_token: dict | None = None,
-        oauth2_token: dict | None = None,
+        oauth1_token: dict[str, Any] | None = None,
+        oauth2_token: dict[str, Any] | None = None,
         domain: str = "garmin.com",
     ) -> None:
         """Initialize auth handler.
@@ -55,12 +55,12 @@ class GarminAuth:
         self._consumer_secret: str | None = None
 
     @property
-    def oauth1_token(self) -> dict | None:
+    def oauth1_token(self) -> dict[str, Any] | None:
         """Return OAuth1 token."""
         return self._oauth1_token
 
     @property
-    def oauth2_token(self) -> dict | None:
+    def oauth2_token(self) -> dict[str, Any] | None:
         """Return OAuth2 token."""
         return self._oauth2_token
 
@@ -309,7 +309,7 @@ class GarminAuth:
             oauth2_token=self._oauth2_token,
         )
 
-    async def _get_oauth1_token(self, ticket: str) -> dict:
+    async def _get_oauth1_token(self, ticket: str) -> dict[str, Any]:
         """Get OAuth1 token using ticket."""
         from oauthlib.oauth1 import Client as OAuth1Client
 
@@ -336,7 +336,7 @@ class GarminAuth:
             token["domain"] = self._domain
             return token
 
-    async def _exchange_oauth1_for_oauth2(self) -> dict:
+    async def _exchange_oauth1_for_oauth2(self) -> dict[str, Any]:
         """Exchange OAuth1 token for OAuth2 token."""
         from oauthlib.oauth1 import Client as OAuth1Client
 

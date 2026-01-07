@@ -1107,7 +1107,7 @@ class GarminClient:
         """
         from datetime import datetime
 
-        from .fit import FitEncoderWeight
+        from .fit import FitEncoderWeight  # type: ignore[attr-defined]
 
         _LOGGER.debug(
             "add_body_composition called with weight=%s, timestamp=%s",
@@ -1311,10 +1311,10 @@ class GarminClient:
                             f"Upload failed: {retry_response.status}, body: {body[:500]}"
                         )
                     try:
-                        body = await retry_response.json()
+                        result = await retry_response.json()
                     except Exception:
-                        body = {"raw": await retry_response.text()}
-                    return body
+                        result = {"raw": await retry_response.text()}
+                    return result
 
             # Parse response (may be JSON or error page)
             try:
@@ -1469,10 +1469,10 @@ class GarminClient:
             activity_id = last_activity.get("activityId")
 
             # Fetch polyline
-            if last_activity.get("hasPolyline"):
+            if last_activity.get("hasPolyline") and activity_id is not None:
                 try:
                     activity_details = await self.get_activity_details(
-                        activity_id, 100, 4000
+                        int(activity_id), 100, 4000
                     )
                     if activity_details:
                         polyline_data = activity_details.get("geoPolylineDTO", {})
@@ -1651,7 +1651,7 @@ class GarminClient:
         if user_profile_id:
             gear = await self._safe_call(self.get_gear, user_profile_id) or []
             gear_defaults = (
-                await self._safe_call(self.get_gear_defaults, user_profile_id) or []
+                await self._safe_call(self.get_gear_defaults, user_profile_id) or {}
             )
 
             activity_type_names = {

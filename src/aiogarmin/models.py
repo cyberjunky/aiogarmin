@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -15,8 +17,8 @@ class AuthResult(BaseModel):
     """Result of authentication attempt."""
 
     success: bool
-    oauth1_token: dict | None = None
-    oauth2_token: dict | None = None
+    oauth1_token: dict[str, Any] | None = None
+    oauth2_token: dict[str, Any] | None = None
     display_name: str | None = None
     user_id: str | None = None
 

@@ -1,42 +1,49 @@
 .PHONY: install format lint test build publish clean
 
+# Python executable from venv
+PYTHON := .venv/bin/python
+PIP := .venv/bin/pip
+RUFF := .venv/bin/ruff
+MYPY := .venv/bin/mypy
+PYTEST := .venv/bin/pytest
+
 # Install package with dev dependencies
 install:
-	pip install -e ".[dev]"
+	$(PIP) install -e ".[dev]"
 
 # Format code with ruff
 format:
-	ruff format src tests
-	ruff check --fix src tests
+	$(RUFF) format src tests
+	$(RUFF) check --fix src tests
 
 # Lint code
 lint:
-	ruff check src tests
-	ruff format --check src tests
-	mypy src
+	$(RUFF) check src tests
+	$(RUFF) format --check src tests
+	$(MYPY) src
 
 # Run tests with coverage
 test:
-	pytest tests/ -v --cov=aiogarmin --cov-report=term-missing --cov-report=html
+	$(PYTEST) tests/ -v --cov=aiogarmin --cov-report=term-missing --cov-report=html
 
 # Run tests without coverage (faster)
 test-quick:
-	pytest tests/ -v
+	$(PYTEST) tests/ -v
 
 # Build package
 build: clean
-	pip install build
-	python -m build
+	$(PIP) install build
+	$(PYTHON) -m build
 
 # Publish to PyPI
 publish: build
-	pip install twine
-	twine upload dist/*
+	$(PIP) install twine
+	$(PYTHON) -m twine upload dist/*
 
 # Publish to Test PyPI
 publish-test: build
-	pip install twine
-	twine upload --repository testpypi dist/*
+	$(PIP) install twine
+	$(PYTHON) -m twine upload --repository testpypi dist/*
 
 # Clean build artifacts
 clean:
