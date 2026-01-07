@@ -1,6 +1,5 @@
 """Tests for FIT file generation."""
 
-import pytest
 from datetime import datetime
 
 from aiogarmin.fit import create_body_composition_fit

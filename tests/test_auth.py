@@ -1,6 +1,7 @@
 """Tests for GarminAuth."""
 
 import pytest
+
 from aiogarmin import GarminAuth, GarminAuthError
 
 
