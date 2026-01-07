@@ -1,5 +1,8 @@
 """Tests for GarminClient."""
 
+import re
+from datetime import date, timedelta
+
 import pytest
 
 from aiogarmin import GarminAuth, GarminClient
@@ -27,23 +30,27 @@ class TestGarminClient:
         mock_aioresponse.get(
             USER_PROFILE_URL,
             payload={
+                "id": 12345,
+                "profileId": 67890,
                 "displayName": "testuser",
-                "userId": 12345,
                 "profileImageUrlMedium": "https://example.com/image.jpg",
             },
         )
 
-        auth = GarminAuth(session, oauth2_token="token")
+        auth = GarminAuth(session, oauth2_token={"access_token": "token"})
         client = GarminClient(session, auth)
         profile = await client.get_user_profile()
 
         assert profile.display_name == "testuser"
-        assert profile.user_id == 12345
+        assert profile.id == 12345
+        assert profile.profile_id == 67890
 
     async def test_get_activities(self, session, mock_aioresponse):
         """Test get activities."""
+        # Use regex pattern to match URL with query params
+        pattern = re.compile(rf"^{re.escape(ACTIVITIES_URL)}.*$")
         mock_aioresponse.get(
-            ACTIVITIES_URL,
+            pattern,
             payload=[
                 {
                     "activityId": 1,
@@ -56,13 +63,15 @@ class TestGarminClient:
             ],
         )
 
-        auth = GarminAuth(session, oauth2_token="token")
+        auth = GarminAuth(session, oauth2_token={"access_token": "token"})
         client = GarminClient(session, auth)
-        activities = await client.get_activities(limit=10)
+        end_date = date.today()
+        start_date = end_date - timedelta(days=7)
+        activities = await client.get_activities_by_date(start_date, end_date)
 
         assert len(activities) == 1
-        assert activities[0].activity_name == "Morning Run"
-        assert activities[0].distance == 5000.0
+        assert activities[0]["activityName"] == "Morning Run"
+        assert activities[0]["distance"] == 5000.0
 
     async def test_get_devices(self, session, mock_aioresponse):
         """Test get devices."""
@@ -79,10 +88,10 @@ class TestGarminClient:
             ],
         )
 
-        auth = GarminAuth(session, oauth2_token="token")
+        auth = GarminAuth(session, oauth2_token={"access_token": "token"})
         client = GarminClient(session, auth)
         devices = await client.get_devices()
 
         assert len(devices) == 1
-        assert devices[0].display_name == "Forerunner 955"
-        assert devices[0].battery_level == 85
+        assert devices[0]["displayName"] == "Forerunner 955"
+        assert devices[0]["batteryLevel"] == 85
