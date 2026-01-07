@@ -16,7 +16,7 @@ class TestFitGeneration:
             weight=82.3,
             timestamp=timestamp,
         )
-        
+
         assert isinstance(fit_data, bytes)
         assert len(fit_data) > 0
         # FIT files start with header size byte (usually 12 or 14)
@@ -37,6 +37,6 @@ class TestFitGeneration:
             physique_rating=5,
             bmi=24.7,
         )
-        
+
         assert isinstance(fit_data, bytes)
         assert len(fit_data) > 100  # Should be larger with more data
