@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, urljoin
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qs
 
 from .exceptions import GarminAuthError, GarminMFARequired
 from .models import AuthResult
@@ -228,9 +228,7 @@ class GarminAuth:
             if not csrf_token:
                 # No token available - session truly expired
                 self._clear_mfa_session()
-                raise GarminAuthError(
-                    "MFA session expired - please restart login"
-                )
+                raise GarminAuthError("MFA session expired - please restart login")
 
             # Build referrer URL (the MFA page we're on)
             sso_url = f"https://sso.{self._domain}/sso/signin"

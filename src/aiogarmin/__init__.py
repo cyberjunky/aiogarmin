@@ -10,8 +10,8 @@ from .exceptions import (
 
 __all__ = [
     "GarminAuth",
-    "GarminClient",
     "GarminAuthError",
+    "GarminClient",
     "GarminConnectError",
     "GarminMFARequired",
 ]

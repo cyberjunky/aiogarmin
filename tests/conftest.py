@@ -1,7 +1,7 @@
 """Test fixtures for aiogarmin."""
 
-import pytest
 import aiohttp
+import pytest
 from aioresponses import aioresponses
 
 

@@ -1,14 +1,12 @@
 """Tests for GarminClient."""
 
 import pytest
-from datetime import date
 
 from aiogarmin import GarminAuth, GarminClient
 from aiogarmin.const import (
-    USER_PROFILE_URL,
-    USER_SUMMARY_URL,
     ACTIVITIES_URL,
     DEVICES_URL,
+    USER_PROFILE_URL,
 )
 from aiogarmin.exceptions import GarminAuthError
 

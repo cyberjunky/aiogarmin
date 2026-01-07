@@ -1,7 +1,8 @@
 """Tests for GarminAuth."""
 
 import pytest
-from aiogarmin import GarminAuth, GarminAuthError, GarminMFARequired
+
+from aiogarmin import GarminAuth, GarminAuthError
 from aiogarmin.const import GARMIN_SSO_SIGNIN, OAUTH1_URL, OAUTH2_URL
 
 

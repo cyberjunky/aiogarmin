@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .const import (
@@ -17,14 +17,12 @@ from .const import (
     BODY_COMPOSITION_URL,
     DAILY_STEPS_URL,
     DEFAULT_HEADERS,
-    DEVICE_ALARMS_URL,
     DEVICES_URL,
     ENDURANCE_SCORE_URL,
     FITNESS_AGE_URL,
     GARMIN_CN_CONNECT_API,
     GARMIN_CONNECT_API,
     GEAR_DEFAULTS_URL,
-    GEAR_BASE_URL,
     GEAR_LINK_URL,
     GEAR_STATS_URL,
     GEAR_URL,
@@ -33,12 +31,9 @@ from .const import (
     HRV_URL,
     HYDRATION_URL,
     LACTATE_THRESHOLD_URL,
-    MENSTRUAL_URL,
     MENSTRUAL_CALENDAR_URL,
-    MORNING_TRAINING_READINESS_URL,
-    RESPIRATION_URL,
+    MENSTRUAL_URL,
     SLEEP_URL,
-    SPO2_URL,
     TRAINING_READINESS_URL,
     TRAINING_STATUS_URL,
     UPLOAD_URL,
@@ -122,43 +117,55 @@ def _grams_to_kg(grams: int | float | None) -> float | None:
 
 def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Add pre-computed fields for common unit conversions and nested extractions.
-    
+
     This simplifies the Home Assistant integration by providing ready-to-use values.
     """
     result = dict(data)
-    
+
     # === Sleep: seconds → minutes ===
     for key in [
-        "sleepTimeSeconds", "deepSleepSeconds", "lightSleepSeconds",
-        "remSleepSeconds", "awakeSleepSeconds", "sleepingSeconds",
-        "measurableAsleepDuration", "measurableAwakeDuration",
+        "sleepTimeSeconds",
+        "deepSleepSeconds",
+        "lightSleepSeconds",
+        "remSleepSeconds",
+        "awakeSleepSeconds",
+        "sleepingSeconds",
+        "measurableAsleepDuration",
+        "measurableAwakeDuration",
     ]:
         if key in result:
-            minutes_key = key.replace("Seconds", "Minutes").replace("Duration", "DurationMinutes")
+            minutes_key = key.replace("Seconds", "Minutes").replace(
+                "Duration", "DurationMinutes"
+            )
             result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
-    
+
     # === Stress: seconds → minutes ===
     for key in [
-        "totalStressDuration", "restStressDuration", "activityStressDuration",
-        "lowStressDuration", "mediumStressDuration", "highStressDuration",
-        "uncategorizedStressDuration", "stressDuration",
+        "totalStressDuration",
+        "restStressDuration",
+        "activityStressDuration",
+        "lowStressDuration",
+        "mediumStressDuration",
+        "highStressDuration",
+        "uncategorizedStressDuration",
+        "stressDuration",
     ]:
         if key in result:
             minutes_key = key.replace("Duration", "Minutes")
             result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
-    
+
     # === Activity: seconds → minutes ===
     for key in ["activeSeconds", "highlyActiveSeconds", "sedentarySeconds"]:
         if key in result:
             minutes_key = key.replace("Seconds", "Minutes")
             result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
-    
+
     # === Weight: grams → kg ===
     for key in ["weight", "boneMass", "muscleMass"]:
         if key in result:
             kg_key = f"{key}Kg"
             result[kg_key] = _grams_to_kg(result.get(key, 0))
-    
+
     # === HRV: flatten nested structure ===
     hrv = result.get("hrvStatus", {})
     if hrv:
@@ -170,34 +177,36 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
         result["hrvBaselineLowUpper"] = baseline.get("lowUpper")
         result["hrvBaselineBalancedLow"] = baseline.get("balancedLow")
         result["hrvBaselineBalancedUpper"] = baseline.get("balancedUpper")
-    
+
     # === Training: flatten nested structures ===
     training_readiness = result.get("trainingReadiness", {})
     if training_readiness:
         result["trainingReadinessScore"] = training_readiness.get("score")
         result["trainingReadinessLevel"] = training_readiness.get("level")
-    
+
     morning_readiness = result.get("morningTrainingReadiness", {})
     if morning_readiness:
         result["morningTrainingReadinessScore"] = morning_readiness.get("score")
-    
+
     training_status = result.get("trainingStatus", {})
     if training_status:
         result["trainingStatusPhrase"] = training_status.get("trainingStatusPhrase")
-    
+
     # === Scores: flatten nested structures ===
     endurance = result.get("enduranceScore", {})
     if endurance:
         result["enduranceScoreValue"] = endurance.get("overallScore")
-    
+
     hill = result.get("hillScore", {})
     if hill:
         result["hillScoreValue"] = hill.get("overallScore")
-    
+
     # === Stress qualifier: capitalize ===
     if "stressQualifier" in result:
-        result["stressQualifierText"] = (result.get("stressQualifier") or "").capitalize()
-    
+        result["stressQualifierText"] = (
+            result.get("stressQualifier") or ""
+        ).capitalize()
+
     return result
 
 
@@ -380,7 +389,6 @@ class GarminClient:
     # - fetch_blood_pressure_data() for blood pressure
     # - fetch_menstrual_data() for menstrual cycle data
 
-
     def _calculate_next_active_alarms(
         self, alarms: list[dict[str, Any]] | None, timezone: str | None
     ) -> list[str] | None:
@@ -406,8 +414,13 @@ class GarminClient:
 
         active_alarms: list[str] = []
         day_to_number = {
-            "MONDAY": 1, "TUESDAY": 2, "WEDNESDAY": 3, "THURSDAY": 4,
-            "FRIDAY": 5, "SATURDAY": 6, "SUNDAY": 7,
+            "MONDAY": 1,
+            "TUESDAY": 2,
+            "WEDNESDAY": 3,
+            "THURSDAY": 4,
+            "FRIDAY": 5,
+            "SATURDAY": 6,
+            "SUNDAY": 7,
         }
 
         try:
@@ -418,8 +431,7 @@ class GarminClient:
             return None
 
         _LOGGER.debug(
-            "Processing %d alarms at %s (%s)",
-            len(alarms), now.isoformat(), timezone
+            "Processing %d alarms at %s (%s)", len(alarms), now.isoformat(), timezone
         )
 
         for alarm_setting in alarms:
@@ -428,7 +440,8 @@ class GarminClient:
             if alarm_mode != "ON":
                 _LOGGER.debug(
                     "Skipping alarm %s (mode=%s)",
-                    alarm_setting.get("alarmId"), alarm_mode
+                    alarm_setting.get("alarmId"),
+                    alarm_mode,
                 )
                 continue
 
@@ -438,7 +451,9 @@ class GarminClient:
 
             _LOGGER.debug(
                 "Processing alarm %s: time=%d min, days=%s",
-                alarm_setting.get("alarmId"), alarm_minutes, alarm_days
+                alarm_setting.get("alarmId"),
+                alarm_minutes,
+                alarm_days,
             )
 
             for day in alarm_days:
@@ -484,7 +499,9 @@ class GarminClient:
                     active_alarms.append(alarm.isoformat())
                     _LOGGER.debug(
                         "%s alarm scheduled for %s (in %d days)",
-                        day, alarm.isoformat(), days_ahead
+                        day,
+                        alarm.isoformat(),
+                        days_ahead,
                     )
 
                 else:
@@ -538,7 +555,6 @@ class GarminClient:
         data = await self._request("GET", url)
         return data.get("totalAverage", {}) if isinstance(data, dict) else {}
 
-
     async def get_activities_by_date(
         self, start_date: date, end_date: date
     ) -> list[dict[str, Any]]:
@@ -565,14 +581,13 @@ class GarminClient:
         self, activity_id: int
     ) -> list[dict[str, Any]]:
         """Get heart rate time in zones for an activity.
-        
+
         Returns a list of HR zones with time spent in each zone.
         Example: [{"zoneName": "Zone 1", "secsInZone": 300}, ...]
         """
         url = f"{ACTIVITY_DETAILS_URL}/{activity_id}/hrTimeInZones"
         data = await self._request("GET", url)
         return data if isinstance(data, list) else []
-
 
     async def get_workouts(
         self, start: int = 0, limit: int = 10
@@ -584,7 +599,6 @@ class GarminClient:
             return data.get("workouts", [])
         return data if isinstance(data, list) else []
 
-
     async def get_hrv_data(self, target_date: date | None = None) -> dict[str, Any]:
         """Get HRV data for a date."""
         if target_date is None:
@@ -593,7 +607,6 @@ class GarminClient:
         url = f"{HRV_URL}/{target_date.isoformat()}"
         data = await self._request("GET", url)
         return data if isinstance(data, dict) else {}
-
 
     async def get_hydration_data(
         self, target_date: date | None = None
@@ -721,7 +734,7 @@ class GarminClient:
         self, start_date: date | None = None, end_date: date | None = None
     ) -> dict[str, Any]:
         """Get menstrual cycle calendar data with predictions.
-        
+
         Returns cycle summaries including predicted cycles.
         """
         if start_date is None:
@@ -762,7 +775,6 @@ class GarminClient:
         data = await self._request("GET", url, params=params)
         return data if isinstance(data, dict) else {}
 
-
     async def _get_hrv_data_raw(
         self, target_date: date | None = None
     ) -> dict[str, Any]:
@@ -773,7 +785,6 @@ class GarminClient:
         url = f"{HRV_URL}/{target_date.isoformat()}"
         data = await self._request("GET", url)
         return data if isinstance(data, dict) else {}
-
 
     async def get_device_alarms(self) -> list[dict[str, Any]]:
         """Get device alarms from all devices.
@@ -788,7 +799,9 @@ class GarminClient:
             for device in devices:
                 device_id = device.get("deviceId")
                 if device_id:
-                    settings = await self._safe_call(self.get_device_settings, device_id)
+                    settings = await self._safe_call(
+                        self.get_device_settings, device_id
+                    )
                     if settings:
                         device_alarms = settings.get("alarms")
                         if device_alarms:
@@ -805,7 +818,7 @@ class GarminClient:
         self, target_date: date | None = None
     ) -> dict[str, Any]:
         """Get morning training readiness (AFTER_WAKEUP_RESET context).
-        
+
         This filters the regular training readiness data for entries
         with inputContext == 'AFTER_WAKEUP_RESET'.
         """
@@ -814,10 +827,10 @@ class GarminClient:
 
         # Get regular training readiness data
         data = await self.get_training_readiness(target_date)
-        
+
         if not data:
             return {}
-            
+
         # If response is a list, search for morning reading
         if isinstance(data, list):
             # First try to find entry with AFTER_WAKEUP_RESET context
@@ -829,7 +842,7 @@ class GarminClient:
                 ),
                 None,
             )
-            
+
             # If no explicit morning context, return first entry as fallback
             # (typically the morning reading is first in the list)
             if morning_entry is None and data:
@@ -837,12 +850,11 @@ class GarminClient:
                     "No AFTER_WAKEUP_RESET context found, using first entry as fallback"
                 )
                 return data[0] if data else {}
-                
+
             return morning_entry if morning_entry else {}
-        
+
         # If response is a single dict, return it directly
         return data if isinstance(data, dict) else {}
-
 
     # ========== Write/Service Methods ==========
 
@@ -852,7 +864,6 @@ class GarminClient:
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Make authenticated POST request."""
-        from datetime import datetime, timezone
 
         headers = await self._auth.get_auth_headers()
         headers.update(DEFAULT_HEADERS)
@@ -875,10 +886,12 @@ class GarminClient:
                 ) as retry_response:
                     if retry_response.status != 200:
                         error_text = await retry_response.text()
-                        _LOGGER.error("POST retry failed %s: %s", retry_response.status, error_text)
-                        raise GarminAPIError(
-                            f"POST failed: {retry_response.status}"
+                        _LOGGER.error(
+                            "POST retry failed %s: %s",
+                            retry_response.status,
+                            error_text,
                         )
+                        raise GarminAPIError(f"POST failed: {retry_response.status}")
                     return await retry_response.json()
 
             if response.status not in (200, 201, 204):
@@ -918,9 +931,7 @@ class GarminClient:
                     full_url, headers=headers, json=json_data
                 ) as retry_response:
                     if retry_response.status not in (200, 201, 204):
-                        raise GarminAPIError(
-                            f"PUT failed: {retry_response.status}"
-                        )
+                        raise GarminAPIError(f"PUT failed: {retry_response.status}")
                     if retry_response.status == 204:
                         return {}
                     return await retry_response.json()
@@ -950,9 +961,7 @@ class GarminClient:
                     full_url, headers=headers
                 ) as retry_response:
                     if retry_response.status not in (200, 204):
-                        raise GarminAPIError(
-                            f"DELETE failed: {retry_response.status}"
-                        )
+                        raise GarminAPIError(f"DELETE failed: {retry_response.status}")
                     if retry_response.status == 204:
                         return {}
                     return await retry_response.json()
@@ -1033,13 +1042,18 @@ class GarminClient:
             timestamp: ISO timestamp (defaults to now)
             notes: Optional notes
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        _LOGGER.debug("set_blood_pressure called with systolic=%s, diastolic=%s, pulse=%s, timestamp=%s",
-                      systolic, diastolic, pulse, timestamp)
+        _LOGGER.debug(
+            "set_blood_pressure called with systolic=%s, diastolic=%s, pulse=%s, timestamp=%s",
+            systolic,
+            diastolic,
+            pulse,
+            timestamp,
+        )
 
         dt = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
-        dt_gmt = dt.astimezone(timezone.utc)
+        dt_gmt = dt.astimezone(UTC)
 
         def fmt_ts(d: datetime) -> str:
             """Format timestamp with milliseconds precision like python-garminconnect."""
@@ -1097,7 +1111,8 @@ class GarminClient:
 
         _LOGGER.debug(
             "add_body_composition called with weight=%s, timestamp=%s",
-            weight, timestamp
+            weight,
+            timestamp,
         )
 
         dt = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
@@ -1126,8 +1141,7 @@ class GarminClient:
 
         # Upload FIT file
         return await self._upload_fit_file(
-            fit_encoder.getvalue(),
-            "body_composition.fit"
+            fit_encoder.getvalue(), "body_composition.fit"
         )
 
     async def set_active_gear(
@@ -1151,13 +1165,16 @@ class GarminClient:
 
         _LOGGER.debug(
             "set_active_gear called: activity_type=%s, setting=%s, gear_uuid=%s",
-            activity_type, setting, gear_uuid
+            activity_type,
+            setting,
+            gear_uuid,
         )
 
         # Determine the action based on setting
-        if setting == "set this as default, unset others":
-            default_gear = True
-        elif setting == "set as default":
+        if (
+            setting == "set this as default, unset others"
+            or setting == "set as default"
+        ):
             default_gear = True
         elif setting == "unset default":
             default_gear = False
@@ -1168,7 +1185,7 @@ class GarminClient:
         # PUT gear-service/gear/{gearUUID}/activityType/{activityTypeId}/default/true
         # DELETE gear-service/gear/{gearUUID}/activityType/{activityTypeId}
         # Note: activityType must be numeric (1=running, 2=cycling, etc.)
-        
+
         activity_type_map = {
             "running": 1,
             "cycling": 2,
@@ -1178,7 +1195,7 @@ class GarminClient:
             "other": 9,
         }
         activity_type_id = activity_type_map.get(activity_type.lower(), activity_type)
-        
+
         url_path = f"/gear-service/gear/{gear_uuid}/activityType/{activity_type_id}"
 
         if default_gear:
@@ -1226,9 +1243,7 @@ class GarminClient:
 
         return await self._post_request(ACTIVITY_CREATE_URL, payload)
 
-    async def upload_activity(
-        self, file_path: str
-    ) -> dict[str, Any]:
+    async def upload_activity(self, file_path: str) -> dict[str, Any]:
         """Upload an activity file (FIT, GPX, TCX).
 
         Args:
@@ -1256,8 +1271,9 @@ class GarminClient:
         file_bytes = await asyncio.get_event_loop().run_in_executor(
             None, path.read_bytes
         )
-        
+
         from aiohttp import FormData
+
         data = FormData()
         # Match requests library multipart format
         content_type_map = {
@@ -1265,15 +1281,17 @@ class GarminClient:
             ".gpx": "application/gpx+xml",
             ".tcx": "application/vnd.garmin.tcx+xml",
         }
-        content_type = content_type_map.get(path.suffix.lower(), "application/octet-stream")
-        data.add_field('file', file_bytes, filename=path.name, content_type=content_type)
-        
+        content_type = content_type_map.get(
+            path.suffix.lower(), "application/octet-stream"
+        )
+        data.add_field(
+            "file", file_bytes, filename=path.name, content_type=content_type
+        )
+
         full_url = self._get_url(UPLOAD_URL)
         _LOGGER.debug("Uploading activity file: %s", path.name)
 
-        async with self._session.post(
-            full_url, headers=headers, data=data
-        ) as response:
+        async with self._session.post(full_url, headers=headers, data=data) as response:
             # Handle 403 by refreshing token and retrying
             if response.status == 403:
                 _LOGGER.debug("Upload got 403, refreshing token and retrying")
@@ -1281,31 +1299,39 @@ class GarminClient:
                 headers = await self._auth.get_auth_headers()
                 headers["User-Agent"] = "GCM-iOS-5.7.2.1"
                 data = FormData()
-                data.add_field('file', file_bytes, filename=path.name, content_type=content_type)
+                data.add_field(
+                    "file", file_bytes, filename=path.name, content_type=content_type
+                )
                 async with self._session.post(
                     full_url, headers=headers, data=data
                 ) as retry_response:
                     if retry_response.status not in (200, 201, 400):
                         body = await retry_response.text()
-                        raise GarminAPIError(f"Upload failed: {retry_response.status}, body: {body[:500]}")
+                        raise GarminAPIError(
+                            f"Upload failed: {retry_response.status}, body: {body[:500]}"
+                        )
                     try:
                         body = await retry_response.json()
                     except Exception:
                         body = {"raw": await retry_response.text()}
                     return body
-            
+
             # Parse response (may be JSON or error page)
             try:
                 body = await response.json()
             except Exception:
                 error_text = await response.text()
-                raise GarminAPIError(f"Upload failed: {response.status}, body: {error_text[:500]}")
-            
+                raise GarminAPIError(
+                    f"Upload failed: {response.status}, body: {error_text[:500]}"
+                ) from None
+
             # 400 with uploadId means file was accepted but has validation issues
-            if response.status == 400 and body.get("detailedImportResult", {}).get("uploadId"):
+            if response.status == 400 and body.get("detailedImportResult", {}).get(
+                "uploadId"
+            ):
                 _LOGGER.warning("Upload accepted with warnings: %s", body)
                 return body
-            
+
             # Handle 409 (duplicate) and other errors with friendly messages
             if response.status not in (200, 201, 202):
                 result = body.get("detailedImportResult", {})
@@ -1335,11 +1361,9 @@ class GarminClient:
 
     # ========== Multi-Coordinator Fetch Methods ==========
 
-    async def fetch_core_data(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
+    async def fetch_core_data(self, target_date: date | None = None) -> dict[str, Any]:
         """Fetch core data: summary, daily steps, sleep.
-        
+
         API calls: get_user_summary, get_daily_steps, get_sleep_data (3 calls)
         """
         if target_date is None:
@@ -1350,7 +1374,9 @@ class GarminClient:
 
         # Core summary with midnight fallback
         summary_raw = await self._safe_call(self._get_user_summary_raw, target_date)
-        today_data_not_ready = not summary_raw or summary_raw.get("dailyStepGoal") is None
+        today_data_not_ready = (
+            not summary_raw or summary_raw.get("dailyStepGoal") is None
+        )
 
         if today_data_not_ready:
             yesterday_summary = await self._safe_call(
@@ -1394,7 +1420,9 @@ class GarminClient:
         if sleep_data:
             try:
                 daily_sleep = sleep_data.get("dailySleepDTO", {})
-                sleep_score = daily_sleep.get("sleepScores", {}).get("overall", {}).get("value")
+                sleep_score = (
+                    daily_sleep.get("sleepScores", {}).get("overall", {}).get("value")
+                )
                 sleep_time_seconds = daily_sleep.get("sleepTimeSeconds")
                 deep_sleep_seconds = daily_sleep.get("deepSleepSeconds")
                 light_sleep_seconds = daily_sleep.get("lightSleepSeconds")
@@ -1422,8 +1450,8 @@ class GarminClient:
         self, target_date: date | None = None
     ) -> dict[str, Any]:
         """Fetch activity data: activities, polyline, HR zones, workouts.
-        
-        API calls: get_activities_by_date, get_activity_details, 
+
+        API calls: get_activities_by_date, get_activity_details,
                    get_activity_hr_in_timezones, get_workouts (4 calls)
         """
         if target_date is None:
@@ -1439,7 +1467,7 @@ class GarminClient:
         if activities_by_date:
             last_activity = dict(activities_by_date[0])
             activity_id = last_activity.get("activityId")
-            
+
             # Fetch polyline
             if last_activity.get("hasPolyline"):
                 try:
@@ -1456,7 +1484,7 @@ class GarminClient:
                         ]
                 except GarminAPIError as err:
                     _LOGGER.debug("Failed to fetch polyline: %s", err)
-            
+
             # Fetch HR zones
             if activity_id:
                 hr_zones = await self._safe_call(
@@ -1484,7 +1512,7 @@ class GarminClient:
         self, target_date: date | None = None
     ) -> dict[str, Any]:
         """Fetch training data: readiness, status, lactate, scores, HRV.
-        
+
         API calls: get_training_readiness, get_morning_training_readiness,
                    get_training_status, get_lactate_threshold, get_endurance_score,
                    get_hill_score, get_hrv_data (7 calls)
@@ -1528,11 +1556,9 @@ class GarminClient:
         }
         return _add_computed_fields(data)
 
-    async def fetch_body_data(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
+    async def fetch_body_data(self, target_date: date | None = None) -> dict[str, Any]:
         """Fetch body data: body composition, hydration, fitness age.
-        
+
         API calls: get_body_composition, get_hydration_data, get_fitness_age (3 calls)
         """
         if target_date is None:
@@ -1556,7 +1582,7 @@ class GarminClient:
 
     async def fetch_goals_data(self) -> dict[str, Any]:
         """Fetch goals data: goals, badges.
-        
+
         API calls: get_goals×3, get_earned_badges (4 calls)
         """
         active_goals = await self._safe_call(self.get_goals, "active")
@@ -1565,15 +1591,23 @@ class GarminClient:
 
         raw_badges = await self._safe_call(self.get_earned_badges)
         raw_badges = raw_badges or []
-        
+
         # Calculate points before trimming
         user_points = sum(
             badge.get("badgePoints", 0) * badge.get("badgeEarnedNumber", 1)
             for badge in raw_badges
         )
         level_points = {
-            1: 0, 2: 20, 3: 60, 4: 140, 5: 300,
-            6: 600, 7: 1200, 8: 2400, 9: 4800, 10: 9600,
+            1: 0,
+            2: 20,
+            3: 60,
+            4: 140,
+            5: 300,
+            6: 600,
+            7: 1200,
+            8: 2400,
+            9: 4800,
+            10: 9600,
         }
         user_level = 1
         for level, points in level_points.items():
@@ -1600,12 +1634,10 @@ class GarminClient:
             "userLevel": user_level,
         }
 
-    async def fetch_gear_data(
-        self, timezone: str | None = None
-    ) -> dict[str, Any]:
+    async def fetch_gear_data(self, timezone: str | None = None) -> dict[str, Any]:
         """Fetch gear data: gear, defaults, stats, alarms.
-        
-        API calls: get_gear, get_gear_defaults, get_gear_stats×N, 
+
+        API calls: get_gear, get_gear_defaults, get_gear_stats×N,
                    get_device_alarms (4+ calls)
         """
         # Get user profile ID for gear API
@@ -1618,13 +1650,19 @@ class GarminClient:
 
         if user_profile_id:
             gear = await self._safe_call(self.get_gear, user_profile_id) or []
-            gear_defaults = await self._safe_call(
-                self.get_gear_defaults, user_profile_id
-            ) or []
+            gear_defaults = (
+                await self._safe_call(self.get_gear_defaults, user_profile_id) or []
+            )
 
             activity_type_names = {
-                1: "running", 2: "cycling", 3: "walking", 4: "hiking",
-                5: "swimming", 6: "gym", 7: "yoga", 9: "other",
+                1: "running",
+                2: "cycling",
+                3: "walking",
+                4: "hiking",
+                5: "swimming",
+                6: "gym",
+                7: "yoga",
+                9: "other",
             }
             gear_default_activities: dict[str, list[str]] = {}
             if isinstance(gear_defaults, list):
@@ -1634,7 +1672,9 @@ class GarminClient:
                     if uuid and activity_pk and default.get("defaultGear"):
                         if uuid not in gear_default_activities:
                             gear_default_activities[uuid] = []
-                        activity_name = activity_type_names.get(activity_pk, f"type_{activity_pk}")
+                        activity_name = activity_type_names.get(
+                            activity_pk, f"type_{activity_pk}"
+                        )
                         gear_default_activities[uuid].append(activity_name)
 
             if gear:
@@ -1645,15 +1685,21 @@ class GarminClient:
                         if stats:
                             stats["gearUuid"] = gear_uuid
                             stats["gearName"] = gear_item.get("displayName", "Unknown")
-                            stats["gearTypeName"] = gear_item.get("gearTypeName", "Unknown")
-                            stats["gearStatusName"] = gear_item.get("gearStatusName", "active")
+                            stats["gearTypeName"] = gear_item.get(
+                                "gearTypeName", "Unknown"
+                            )
+                            stats["gearStatusName"] = gear_item.get(
+                                "gearStatusName", "active"
+                            )
                             stats["gearMakeName"] = gear_item.get("gearMakeName")
                             stats["gearModelName"] = gear_item.get("gearModelName")
                             stats["customMakeModel"] = gear_item.get("customMakeModel")
                             stats["dateBegin"] = gear_item.get("dateBegin")
                             stats["dateEnd"] = gear_item.get("dateEnd")
                             stats["maximumMeters"] = gear_item.get("maximumMeters")
-                            stats["defaultForActivity"] = gear_default_activities.get(gear_uuid, [])
+                            stats["defaultForActivity"] = gear_default_activities.get(
+                                gear_uuid, []
+                            )
                             gear_stats.append(stats)
 
         # Alarms
@@ -1671,7 +1717,7 @@ class GarminClient:
         self, target_date: date | None = None
     ) -> dict[str, Any]:
         """Fetch blood pressure data.
-        
+
         API calls: get_blood_pressure (1 call)
         """
         if target_date is None:
@@ -1685,12 +1731,12 @@ class GarminClient:
         )
         if bp_response and isinstance(bp_response, dict):
             summaries = bp_response.get("measurementSummaries", [])
-            
+
             all_measurements: list[dict[str, Any]] = []
             for summary in summaries:
                 measurements = summary.get("measurements", [])
                 all_measurements.extend(measurements)
-            
+
             if all_measurements:
                 latest_bp = max(
                     all_measurements,
@@ -1724,7 +1770,7 @@ class GarminClient:
         self, target_date: date | None = None
     ) -> dict[str, Any]:
         """Fetch menstrual data: day summary and calendar predictions.
-        
+
         API calls: get_menstrual_data, get_menstrual_calendar (2 calls)
         """
         if target_date is None:
@@ -1732,7 +1778,7 @@ class GarminClient:
 
         menstrual_data = await self._safe_call(self.get_menstrual_data, target_date)
         menstrual_data = menstrual_data or {}
-        
+
         menstrual_calendar = await self._safe_call(self.get_menstrual_calendar)
         menstrual_calendar = menstrual_calendar or {}
 
