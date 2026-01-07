@@ -137,9 +137,9 @@ The library automatically adds computed fields for convenience:
 
 This library is inspired by and builds upon great work from:
 
-Matin's **[garth](https://github.com/matin/garth)** - Garmin SSO auth + Connect Python client
+**[garth](https://github.com/matin/garth)** - Garmin SSO auth + Connect Python client
 
-Special thanks to him for the Garmin Connect authentication flow and making it available to the community.
+Special thanks to [Matin](https://github.com/matin) for the Garmin Connect authentication flow and making it available to the community.
 
 ## License
 

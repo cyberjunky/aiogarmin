@@ -1028,20 +1028,24 @@ class GarminClient:
     ) -> dict[str, Any]:
         """Add body composition measurement.
 
+        Note: The Garmin Connect web API only supports basic weight entry via JSON POST.
+        Full body composition data (body fat, muscle mass, etc.) requires FIT file upload.
+        This method will add the weight entry. Additional fields are logged but not sent.
+
         Args:
             weight: Weight in kg (required)
             timestamp: ISO timestamp (defaults to now)
-            percent_fat: Body fat percentage
-            percent_hydration: Hydration percentage
-            visceral_fat_mass: Visceral fat mass in kg
-            bone_mass: Bone mass in kg
-            muscle_mass: Muscle mass in kg
-            basal_met: Basal metabolic rate in kcal
-            active_met: Active metabolic rate in kcal
-            physique_rating: Physique rating (1-9)
-            metabolic_age: Metabolic age in years
-            visceral_fat_rating: Visceral fat rating (1-59)
-            bmi: Body mass index
+            percent_fat: Body fat percentage (not supported via JSON API)
+            percent_hydration: Hydration percentage (not supported via JSON API)
+            visceral_fat_mass: Visceral fat mass in kg (not supported via JSON API)
+            bone_mass: Bone mass in kg (not supported via JSON API)
+            muscle_mass: Muscle mass in kg (not supported via JSON API)
+            basal_met: Basal metabolic rate in kcal (not supported via JSON API)
+            active_met: Active metabolic rate in kcal (not supported via JSON API)
+            physique_rating: Physique rating (1-9) (not supported via JSON API)
+            metabolic_age: Metabolic age in years (not supported via JSON API)
+            visceral_fat_rating: Visceral fat rating (1-59) (not supported via JSON API)
+            bmi: Body mass index (not supported via JSON API)
         """
         from datetime import datetime, timezone
 
@@ -1050,6 +1054,28 @@ class GarminClient:
             weight, timestamp
         )
 
+        # Log if extra fields were provided (they won't be sent)
+        extra_fields = {
+            "percent_fat": percent_fat,
+            "percent_hydration": percent_hydration,
+            "visceral_fat_mass": visceral_fat_mass,
+            "bone_mass": bone_mass,
+            "muscle_mass": muscle_mass,
+            "basal_met": basal_met,
+            "active_met": active_met,
+            "physique_rating": physique_rating,
+            "metabolic_age": metabolic_age,
+            "visceral_fat_rating": visceral_fat_rating,
+            "bmi": bmi,
+        }
+        provided_extras = {k: v for k, v in extra_fields.items() if v is not None}
+        if provided_extras:
+            _LOGGER.warning(
+                "Body composition extra fields provided but not supported via JSON API "
+                "(requires FIT file upload): %s",
+                provided_extras
+            )
+
         dt = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
         dt_gmt = dt.astimezone(timezone.utc)
 
@@ -1057,37 +1083,14 @@ class GarminClient:
             """Format timestamp with milliseconds precision."""
             return d.replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
-        # Build payload - only include non-None values
-        payload: dict[str, Any] = {
+        # Use same payload format as add_weigh_in which works
+        payload = {
             "dateTimestamp": fmt_ts(dt),
             "gmtTimestamp": fmt_ts(dt_gmt),
-            "weight": weight * 1000,  # Convert kg to grams
+            "unitKey": "kg",
             "sourceType": "MANUAL",
+            "value": weight,
         }
-
-        # Add optional fields if provided
-        if bmi is not None:
-            payload["bmi"] = bmi
-        if percent_fat is not None:
-            payload["bodyFat"] = percent_fat
-        if percent_hydration is not None:
-            payload["bodyWater"] = percent_hydration
-        if visceral_fat_mass is not None:
-            payload["visceralFat"] = visceral_fat_mass
-        if bone_mass is not None:
-            payload["boneMass"] = bone_mass * 1000  # Convert to grams
-        if muscle_mass is not None:
-            payload["muscleMass"] = muscle_mass * 1000  # Convert to grams
-        if basal_met is not None:
-            payload["basalMet"] = basal_met
-        if active_met is not None:
-            payload["activeMet"] = active_met
-        if physique_rating is not None:
-            payload["physiqueRating"] = physique_rating
-        if metabolic_age is not None:
-            payload["metabolicAge"] = metabolic_age
-        if visceral_fat_rating is not None:
-            payload["visceralFatRating"] = visceral_fat_rating
 
         _LOGGER.debug("Body composition payload: %s", payload)
         return await self._post_request(WEIGHT_URL, payload)
