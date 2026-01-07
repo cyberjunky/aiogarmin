@@ -77,6 +77,7 @@ BLOOD_PRESSURE_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure/
 BLOOD_PRESSURE_SET_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure"
 WEIGHT_URL = f"{GARMIN_CONNECT_API}/weight-service/user-weight"
 MENSTRUAL_URL = f"{GARMIN_CONNECT_API}/periodichealth-service/menstrualcycle/dayview"
+MENSTRUAL_CALENDAR_URL = f"{GARMIN_CONNECT_API}/periodichealth-service/menstrualcycle/calendar"
 
 # Upload/Write endpoints
 UPLOAD_URL = f"{GARMIN_CONNECT_API}/upload-service/upload"

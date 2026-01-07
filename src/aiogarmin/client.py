@@ -35,6 +35,7 @@ from .const import (
     HYDRATION_URL,
     LACTATE_THRESHOLD_URL,
     MENSTRUAL_URL,
+    MENSTRUAL_CALENDAR_URL,
     MORNING_TRAINING_READINESS_URL,
     RESPIRATION_URL,
     SLEEP_URL,
@@ -57,6 +58,150 @@ if TYPE_CHECKING:
     from .auth import GarminAuth
 
 _LOGGER = logging.getLogger(__name__)
+
+# Essential keys to keep when trimming activity data
+# This reduces ~3KB per activity to ~500 bytes
+ACTIVITY_ESSENTIAL_KEYS = {
+    # Identity
+    "activityId",
+    "activityName",
+    # Time
+    "startTimeLocal",
+    "startTimeGMT",
+    "duration",
+    "movingDuration",
+    "elapsedDuration",
+    # Distance/Speed
+    "distance",
+    "averageSpeed",
+    "maxSpeed",
+    # Location
+    "locationName",
+    "startLatitude",
+    "startLongitude",
+    "endLatitude",
+    "endLongitude",
+    # Heart Rate
+    "averageHR",
+    "maxHR",
+    # Stats
+    "calories",
+    "steps",
+    "elevationGain",
+    "elevationLoss",
+    # Cadence
+    "averageRunningCadenceInStepsPerMinute",
+    "maxRunningCadenceInStepsPerMinute",
+    # Type (simplified)
+    "activityType",
+    # Polyline/GPS (for map display)
+    "hasPolyline",
+    "polyline",
+}
+
+
+def _trim_activity(activity: dict[str, Any]) -> dict[str, Any]:
+    """Trim activity to essential fields only to reduce data size."""
+    trimmed = {k: v for k, v in activity.items() if k in ACTIVITY_ESSENTIAL_KEYS}
+    # Simplify activityType to just typeKey
+    if "activityType" in trimmed and isinstance(trimmed["activityType"], dict):
+        trimmed["activityType"] = trimmed["activityType"].get("typeKey", "unknown")
+    return trimmed
+
+
+def _seconds_to_minutes(seconds: int | float | None) -> float | None:
+    """Convert seconds to minutes, rounded to 2 decimal places."""
+    if seconds is None:
+        return None
+    return round(seconds / 60, 2)
+
+
+def _grams_to_kg(grams: int | float | None) -> float | None:
+    """Convert grams to kilograms, rounded to 2 decimal places."""
+    if grams is None:
+        return None
+    return round(grams / 1000, 2)
+
+
+def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Add pre-computed fields for common unit conversions and nested extractions.
+    
+    This simplifies the Home Assistant integration by providing ready-to-use values.
+    """
+    result = dict(data)
+    
+    # === Sleep: seconds → minutes ===
+    for key in [
+        "sleepTimeSeconds", "deepSleepSeconds", "lightSleepSeconds",
+        "remSleepSeconds", "awakeSleepSeconds", "sleepingSeconds",
+        "measurableAsleepDuration", "measurableAwakeDuration",
+    ]:
+        if key in result:
+            minutes_key = key.replace("Seconds", "Minutes").replace("Duration", "DurationMinutes")
+            result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
+    
+    # === Stress: seconds → minutes ===
+    for key in [
+        "totalStressDuration", "restStressDuration", "activityStressDuration",
+        "lowStressDuration", "mediumStressDuration", "highStressDuration",
+        "uncategorizedStressDuration", "stressDuration",
+    ]:
+        if key in result:
+            minutes_key = key.replace("Duration", "Minutes")
+            result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
+    
+    # === Activity: seconds → minutes ===
+    for key in ["activeSeconds", "highlyActiveSeconds", "sedentarySeconds"]:
+        if key in result:
+            minutes_key = key.replace("Seconds", "Minutes")
+            result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
+    
+    # === Weight: grams → kg ===
+    for key in ["weight", "boneMass", "muscleMass"]:
+        if key in result:
+            kg_key = f"{key}Kg"
+            result[kg_key] = _grams_to_kg(result.get(key, 0))
+    
+    # === HRV: flatten nested structure ===
+    hrv = result.get("hrvStatus", {})
+    if hrv:
+        result["hrvStatusText"] = (hrv.get("status") or "").capitalize()
+        result["hrvWeeklyAvg"] = hrv.get("weeklyAvg")
+        result["hrvLastNightAvg"] = hrv.get("lastNightAvg")
+        result["hrvLastNight5MinHigh"] = hrv.get("lastNight5MinHigh")
+        baseline = hrv.get("baseline", {})
+        result["hrvBaselineLowUpper"] = baseline.get("lowUpper")
+        result["hrvBaselineBalancedLow"] = baseline.get("balancedLow")
+        result["hrvBaselineBalancedUpper"] = baseline.get("balancedUpper")
+    
+    # === Training: flatten nested structures ===
+    training_readiness = result.get("trainingReadiness", {})
+    if training_readiness:
+        result["trainingReadinessScore"] = training_readiness.get("score")
+        result["trainingReadinessLevel"] = training_readiness.get("level")
+    
+    morning_readiness = result.get("morningTrainingReadiness", {})
+    if morning_readiness:
+        result["morningTrainingReadinessScore"] = morning_readiness.get("score")
+    
+    training_status = result.get("trainingStatus", {})
+    if training_status:
+        result["trainingStatusPhrase"] = training_status.get("trainingStatusPhrase")
+    
+    # === Scores: flatten nested structures ===
+    endurance = result.get("enduranceScore", {})
+    if endurance:
+        result["enduranceScoreValue"] = endurance.get("overallScore")
+    
+    hill = result.get("hillScore", {})
+    if hill:
+        result["hillScoreValue"] = hill.get("overallScore")
+    
+    # === Stress qualifier: capitalize ===
+    if "stressQualifier" in result:
+        result["stressQualifierText"] = (result.get("stressQualifier") or "").capitalize()
+    
+    return result
 
 
 class GarminClient:
@@ -209,7 +354,7 @@ class GarminClient:
 
                 # Success - return JSON response
                 result = await response.json()
-                _LOGGER.debug("API response from %s: %s", url, str(result)[:500])
+                _LOGGER.debug("API response from %s: %s", url, str(result)[:5000])
                 return result
 
         except (GarminAPIError, GarminAuthError):
@@ -227,366 +372,17 @@ class GarminClient:
             return None
 
     # ========== Main Data Fetching ==========
+    # DEPRECATED: The get_data() method has been removed.
+    # Use specialized fetch methods instead:
+    # - fetch_core_data() for summary, steps, sleep, stress, HRV
+    # - fetch_activity_data() for activities, polylines, workouts
+    # - fetch_training_data() for training readiness, status, lactate threshold
+    # - fetch_body_data() for weight, body composition, hydration, fitness age
+    # - fetch_goals_data() for goals, badges
+    # - fetch_gear_data() for gear stats, alarms
+    # - fetch_blood_pressure_data() for blood pressure
+    # - fetch_menstrual_data() for menstrual cycle data
 
-    async def get_data(
-        self, target_date: date | None = None, timezone: str | None = None
-    ) -> dict[str, Any]:
-        """Fetch all Garmin Connect data for a date.
-
-        Returns FLAT dictionary with all sensor keys matching sensor_descriptions.py.
-        Implements midnight fallback: if today's data isn't ready (dailyStepGoal=None),
-        falls back to yesterday's data.
-
-        Args:
-            target_date: Date to fetch data for (default: today)
-            timezone: Timezone string for alarm calculations (e.g., "Europe/Amsterdam")
-
-        Returns:
-            Flat dictionary with all sensor data keys
-        """
-        if target_date is None:
-            target_date = date.today()
-
-        yesterday_date = target_date - timedelta(days=1)
-        week_ago = target_date - timedelta(days=7)
-
-        # ========== Core Summary with Midnight Fallback ==========
-        summary_raw = await self._safe_call(self._get_user_summary_raw, target_date)
-
-        # Smart fallback: detect when Garmin servers haven't populated today's data yet
-        # Key signal: dailyStepGoal is None means the day data structure doesn't exist
-        today_data_not_ready = not summary_raw or summary_raw.get("dailyStepGoal") is None
-
-        if today_data_not_ready:
-            _LOGGER.debug(
-                "Today's data not ready (dailyStepGoal=%s), fetching yesterday's data",
-                summary_raw.get("dailyStepGoal") if summary_raw else None,
-            )
-            yesterday_summary = await self._safe_call(
-                self._get_user_summary_raw, yesterday_date
-            )
-            if yesterday_summary and yesterday_summary.get("dailyStepGoal") is not None:
-                summary_raw = yesterday_summary
-                _LOGGER.debug("Using yesterday's summary data as fallback")
-
-        # Default to empty dict if still None
-        summary_raw = summary_raw or {}
-
-        _LOGGER.debug(
-            "Summary data: totalSteps=%s, dailyStepGoal=%s, lastSync=%s",
-            summary_raw.get("totalSteps"),
-            summary_raw.get("dailyStepGoal"),
-            summary_raw.get("lastSyncTimestampGMT"),
-        )
-
-        # ========== Weekly Averages ==========
-        daily_steps = await self._safe_call(
-            self.get_daily_steps, week_ago, yesterday_date
-        )
-        yesterday_steps = None
-        yesterday_distance = None
-        weekly_step_avg = None
-        weekly_distance_avg = None
-
-        if daily_steps:
-            if daily_steps:
-                yesterday_data = daily_steps[-1]
-                yesterday_steps = yesterday_data.get("totalSteps")
-                yesterday_distance = yesterday_data.get("totalDistance")
-
-            total_steps = sum(d.get("totalSteps", 0) for d in daily_steps)
-            total_distance = sum(d.get("totalDistance", 0) for d in daily_steps)
-            days_count = len(daily_steps)
-            if days_count > 0:
-                weekly_step_avg = round(total_steps / days_count)
-                weekly_distance_avg = round(total_distance / days_count)
-
-        # ========== Body Composition ==========
-        body_composition = await self._safe_call(self.get_body_composition, target_date)
-        body_composition = body_composition or {}
-
-        # ========== Activities ==========
-        activities_by_date = await self._safe_call(
-            self.get_activities_by_date, week_ago, target_date + timedelta(days=1)
-        )
-        last_activity: dict[str, Any] = {}
-        if activities_by_date:
-            last_activity = dict(activities_by_date[0])
-            # Fetch polyline for last activity if it has GPS data
-            if last_activity.get("hasPolyline"):
-                try:
-                    activity_id = last_activity.get("activityId")
-                    activity_details = await self.get_activity_details(
-                        activity_id, 100, 4000
-                    )
-                    if activity_details:
-                        polyline_data = activity_details.get("geoPolylineDTO", {})
-                        raw_polyline = polyline_data.get("polyline", [])
-                        last_activity["polyline"] = [
-                            {"lat": p.get("lat"), "lon": p.get("lon")}
-                            for p in raw_polyline
-                            if p.get("lat") is not None and p.get("lon") is not None
-                        ]
-                except GarminAPIError as err:
-                    _LOGGER.debug("Failed to fetch polyline for activity: %s", err)
-
-        # ========== Workouts ==========
-        workouts = await self._safe_call(self.get_workouts, 0, 10)
-        workouts = workouts or []
-
-        # ========== Sleep Data ==========
-        sleep_data = await self._safe_call(self._get_sleep_data_raw, target_date)
-        sleep_score = None
-        sleep_time_seconds = None
-        deep_sleep_seconds = None
-        light_sleep_seconds = None
-        rem_sleep_seconds = None
-        awake_sleep_seconds = None
-
-        if sleep_data:
-            try:
-                daily_sleep = sleep_data.get("dailySleepDTO", {})
-                sleep_score = daily_sleep.get("sleepScores", {}).get("overall", {}).get("value")
-                sleep_time_seconds = daily_sleep.get("sleepTimeSeconds")
-                deep_sleep_seconds = daily_sleep.get("deepSleepSeconds")
-                light_sleep_seconds = daily_sleep.get("lightSleepSeconds")
-                rem_sleep_seconds = daily_sleep.get("remSleepSeconds")
-                awake_sleep_seconds = daily_sleep.get("awakeSleepSeconds")
-            except (KeyError, TypeError):
-                pass
-
-        # ========== Stress Data ==========
-        stress_data = await self._safe_call(self._get_stress_data_raw, target_date)
-        stress_data = stress_data or {}
-
-        # ========== HRV Data ==========
-        hrv_data = await self._safe_call(self._get_hrv_data_raw, target_date)
-        hrv_status: dict[str, Any] = {"status": "unknown"}
-        if hrv_data and "hrvSummary" in hrv_data:
-            hrv_status = hrv_data["hrvSummary"]
-
-        # ========== Body Battery ==========
-        body_battery_data = await self._safe_call(self._get_body_battery_raw, target_date)
-
-        # ========== Hydration ==========
-        hydration = await self._safe_call(self.get_hydration_data, target_date)
-        hydration = hydration or {}
-
-        # ========== Training Readiness ==========
-        training_readiness = await self._safe_call(
-            self.get_training_readiness, target_date
-        )
-
-        # ========== Morning Training Readiness ==========
-        morning_training_readiness = await self._safe_call(
-            self.get_morning_training_readiness, target_date
-        )
-
-        # ========== Training Status ==========
-        training_status = await self._safe_call(self.get_training_status, target_date)
-
-        # ========== Lactate Threshold ==========
-        lactate_threshold = await self._safe_call(self.get_lactate_threshold)
-
-        # ========== Endurance Score ==========
-        endurance_data = await self._safe_call(self.get_endurance_score, target_date)
-        endurance_score: dict[str, Any] = {"overallScore": None}
-        if endurance_data and "overallScore" in endurance_data:
-            endurance_score = endurance_data
-
-        # ========== Hill Score ==========
-        hill_data = await self._safe_call(self.get_hill_score, target_date)
-        hill_score: dict[str, Any] = {"overallScore": None}
-        if hill_data and "overallScore" in hill_data:
-            hill_score = hill_data
-
-        # ========== Fitness Age ==========
-        fitness_age = await self._safe_call(self.get_fitness_age, target_date)
-        fitness_age = fitness_age or {}
-
-        # ========== Goals ==========
-        active_goals = await self._safe_call(self.get_goals, "active")
-        future_goals = await self._safe_call(self.get_goals, "future")
-        past_goals = await self._safe_call(self.get_goals, "past")
-
-        # ========== Badges & Gamification ==========
-        badges = await self._safe_call(self.get_earned_badges)
-        badges = badges or []
-        user_points = sum(
-            badge.get("badgePoints", 0) * badge.get("badgeEarnedNumber", 1)
-            for badge in badges
-        )
-        # Calculate user level from points (Garmin's actual thresholds)
-        level_points = {
-            1: 0, 2: 20, 3: 60, 4: 140, 5: 300,
-            6: 600, 7: 1200, 8: 2400, 9: 4800, 10: 9600,
-        }
-        user_level = 1
-        for level, points in level_points.items():
-            if user_points >= points:
-                user_level = level
-
-        # ========== Alarms ==========
-        alarms = await self._safe_call(self.get_device_alarms)
-        next_alarms = self._calculate_next_active_alarms(alarms, timezone)
-
-        # ========== Respiration ==========
-        respiration = await self._safe_call(self.get_respiration_data, target_date)
-        respiration = respiration or {}
-
-        # ========== SPO2 ==========
-        spo2 = await self._safe_call(self.get_spo2_data, target_date)
-        spo2 = spo2 or {}
-
-        # ========== Blood Pressure ==========
-        blood_pressure_data: dict[str, Any] = {}
-        bp_response = await self._safe_call(
-            self.get_blood_pressure,
-            target_date - timedelta(days=30),
-            target_date,
-        )
-        if bp_response and isinstance(bp_response, dict):
-            # Collect all measurements from all summaries
-            all_measurements: list[dict[str, Any]] = []
-            summaries = bp_response.get("measurementSummaries", [])
-            for summary in summaries:
-                measurements = summary.get("measurements", [])
-                all_measurements.extend(measurements)
-
-            if all_measurements:
-                # Find the measurement with the latest timestamp
-                latest_bp = max(
-                    all_measurements,
-                    key=lambda m: m.get("measurementTimestampLocal", ""),
-                )
-                blood_pressure_data = {
-                    "bpSystolic": latest_bp.get("systolic"),
-                    "bpDiastolic": latest_bp.get("diastolic"),
-                    "bpPulse": latest_bp.get("pulse"),
-                    "bpMeasurementTime": latest_bp.get("measurementTimestampLocal"),
-                }
-
-        # ========== Menstrual Data ==========
-        menstrual_data = await self._safe_call(self.get_menstrual_data, target_date)
-        menstrual_data = menstrual_data or {}
-
-        # ========== Gear ==========
-        gear: list[dict[str, Any]] = []
-        gear_stats: list[dict[str, Any]] = []
-        gear_defaults: dict[str, Any] = {}
-        user_profile_id = summary_raw.get("userProfileId")
-
-        if user_profile_id:
-            gear = await self._safe_call(self.get_gear, user_profile_id) or []
-            gear_defaults = await self._safe_call(
-                self.get_gear_defaults, user_profile_id
-            ) or []
-            # Build lookup for default gear by activity type
-            # Activity type IDs: 1=running, 2=cycling, 3=walking, 4=hiking, etc.
-            activity_type_names = {
-                1: "running", 2: "cycling", 3: "walking", 4: "hiking",
-                5: "swimming", 6: "gym", 7: "yoga", 9: "other",
-            }
-            gear_default_activities: dict[str, list[str]] = {}
-            if isinstance(gear_defaults, list):
-                for default in gear_defaults:
-                    uuid = default.get("uuid")
-                    activity_pk = default.get("activityTypePk")
-                    if uuid and activity_pk and default.get("defaultGear"):
-                        if uuid not in gear_default_activities:
-                            gear_default_activities[uuid] = []
-                        activity_name = activity_type_names.get(activity_pk, f"type_{activity_pk}")
-                        gear_default_activities[uuid].append(activity_name)
-
-            # Fetch stats for each gear item
-            if gear:
-                for gear_item in gear:
-                    gear_uuid = gear_item.get("uuid")
-                    if gear_uuid:
-                        stats = await self._safe_call(self.get_gear_stats, gear_uuid)
-                        if stats:
-                            # Include all gear info with stats from filterGear
-                            stats["gearUuid"] = gear_uuid
-                            stats["gearName"] = gear_item.get("displayName", "Unknown")
-                            stats["gearTypeName"] = gear_item.get("gearTypeName", "Unknown")
-                            stats["gearStatusName"] = gear_item.get("gearStatusName", "active")
-                            stats["gearMakeName"] = gear_item.get("gearMakeName")
-                            stats["gearModelName"] = gear_item.get("gearModelName")
-                            stats["customMakeModel"] = gear_item.get("customMakeModel")
-                            stats["dateBegin"] = gear_item.get("dateBegin")
-                            stats["dateEnd"] = gear_item.get("dateEnd")
-                            stats["maximumMeters"] = gear_item.get("maximumMeters")
-                            # Add default activity types for this gear
-                            stats["defaultForActivity"] = gear_default_activities.get(gear_uuid, [])
-                            gear_stats.append(stats)
-
-        # ========== Build Flat Result ==========
-        result: dict[str, Any] = {
-            # From summary (spread all keys)
-            **summary_raw,
-            # Weekly averages
-            "yesterdaySteps": yesterday_steps,
-            "yesterdayDistance": yesterday_distance,
-            "weeklyStepAvg": weekly_step_avg,
-            "weeklyDistanceAvg": weekly_distance_avg,
-            # Body composition
-            **body_composition,
-            # Activities
-            "lastActivities": activities_by_date or [],
-            "lastActivity": last_activity,
-            # Workouts
-            "workouts": workouts,
-            "lastWorkout": workouts[0] if workouts else {},
-            # Sleep
-            "sleepScore": sleep_score,
-            "sleepTimeSeconds": sleep_time_seconds,
-            "deepSleepSeconds": deep_sleep_seconds,
-            "lightSleepSeconds": light_sleep_seconds,
-            "remSleepSeconds": rem_sleep_seconds,
-            "awakeSleepSeconds": awake_sleep_seconds,
-            # Stress (spread all keys)
-            **stress_data,
-            # HRV
-            "hrvStatus": hrv_status,
-            # Body Battery (spread if dict)
-            **(body_battery_data if isinstance(body_battery_data, dict) else {}),
-            # Hydration
-            **hydration,
-            # Training
-            "trainingReadiness": training_readiness or {},
-            "morningTrainingReadiness": morning_training_readiness or {},
-            "trainingStatus": training_status or {},
-            "lactateThreshold": lactate_threshold or {},
-            # Scores
-            "enduranceScore": endurance_score,
-            "hillScore": hill_score,
-            # Fitness age (spread)
-            **fitness_age,
-            # Goals
-            "activeGoals": active_goals or [],
-            "futureGoals": future_goals or [],
-            "goalsHistory": (past_goals or [])[:10],
-            # Gamification
-            "badges": badges,
-            "userPoints": user_points,
-            "userLevel": user_level,
-            # Alarms
-            "nextAlarm": next_alarms,
-            # Respiration
-            **respiration,
-            # SPO2
-            **spo2,
-            # Blood Pressure
-            **blood_pressure_data,
-            # Menstrual
-            "menstrualData": menstrual_data,
-            # Gear
-            "gear": gear,
-            "gearStats": gear_stats,
-            "gearDefaults": gear_defaults,
-        }
-
-        return result
 
     def _calculate_next_active_alarms(
         self, alarms: list[dict[str, Any]] | None, timezone: str | None
@@ -773,6 +569,19 @@ class GarminClient:
         data = await self._request("GET", url, params=params)
         return data if isinstance(data, dict) else {}
 
+    async def get_activity_hr_in_timezones(
+        self, activity_id: int
+    ) -> list[dict[str, Any]]:
+        """Get heart rate time in zones for an activity.
+        
+        Returns a list of HR zones with time spent in each zone.
+        Example: [{"zoneName": "Zone 1", "secsInZone": 300}, ...]
+        """
+        url = f"{ACTIVITY_DETAILS_URL}/{activity_id}/hrTimeInZones"
+        data = await self._request("GET", url)
+        return data if isinstance(data, list) else []
+
+
     async def get_activity_types(self) -> list[dict[str, Any]]:
         """Get available activity types."""
         data = await self._request("GET", ACTIVITY_TYPES_URL)
@@ -944,7 +753,9 @@ class GarminClient:
     ) -> dict[str, Any]:
         """Get blood pressure data for a date range."""
         url = f"{BLOOD_PRESSURE_URL}/{start_date.isoformat()}/{end_date.isoformat()}"
-        data = await self._request("GET", url)
+        # includeAll must be string "true" (not boolean) for aiohttp params
+        params = {"includeAll": "true"}
+        data = await self._request("GET", url, params=params)
         return data if isinstance(data, dict) else {}
 
     async def get_menstrual_data(
@@ -956,6 +767,25 @@ class GarminClient:
 
         url = f"{MENSTRUAL_URL}/{target_date.isoformat()}"
         data = await self._request("GET", url)
+        return data if isinstance(data, dict) else {}
+
+    async def get_menstrual_calendar(
+        self, start_date: date | None = None, end_date: date | None = None
+    ) -> dict[str, Any]:
+        """Get menstrual cycle calendar data with predictions.
+        
+        Returns cycle summaries including predicted cycles.
+        """
+        if start_date is None:
+            start_date = date.today() - timedelta(days=30)
+        if end_date is None:
+            end_date = date.today() + timedelta(days=60)
+
+        params = {
+            "startDate": start_date.isoformat(),
+            "endDate": end_date.isoformat(),
+        }
+        data = await self._request("GET", MENSTRUAL_CALENDAR_URL, params=params)
         return data if isinstance(data, dict) else {}
 
     async def _get_user_summary_raw(
@@ -984,16 +814,6 @@ class GarminClient:
         data = await self._request("GET", url, params=params)
         return data if isinstance(data, dict) else {}
 
-    async def _get_stress_data_raw(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
-        """Get stress data as raw dict for flat data output."""
-        if target_date is None:
-            target_date = date.today()
-
-        url = f"{STRESS_URL}/{target_date.isoformat()}"
-        data = await self._request("GET", url)
-        return data if isinstance(data, dict) else {}
 
     async def _get_hrv_data_raw(
         self, target_date: date | None = None
@@ -1006,19 +826,6 @@ class GarminClient:
         data = await self._request("GET", url)
         return data if isinstance(data, dict) else {}
 
-    async def _get_body_battery_raw(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
-        """Get body battery data as raw dict for flat data output."""
-        if target_date is None:
-            target_date = date.today()
-
-        params = {
-            "startDate": target_date.isoformat(),
-            "endDate": target_date.isoformat(),
-        }
-        data = await self._request("GET", BODY_BATTERY_URL, params=params)
-        return data if isinstance(data, dict) else {}
 
     async def get_device_alarms(self) -> list[dict[str, Any]]:
         """Get device alarms from all devices.
@@ -1049,35 +856,45 @@ class GarminClient:
     async def get_morning_training_readiness(
         self, target_date: date | None = None
     ) -> dict[str, Any]:
-        """Get morning training readiness (AFTER_WAKEUP_RESET context)."""
+        """Get morning training readiness (AFTER_WAKEUP_RESET context).
+        
+        This filters the regular training readiness data for entries
+        with inputContext == 'AFTER_WAKEUP_RESET'.
+        """
         if target_date is None:
             target_date = date.today()
 
-        url = f"{MORNING_TRAINING_READINESS_URL}/{target_date.isoformat()}"
-        data = await self._request("GET", url)
+        # Get regular training readiness data
+        data = await self.get_training_readiness(target_date)
+        
+        if not data:
+            return {}
+            
+        # If response is a list, search for morning reading
+        if isinstance(data, list):
+            # First try to find entry with AFTER_WAKEUP_RESET context
+            morning_entry = next(
+                (
+                    entry
+                    for entry in data
+                    if entry.get("inputContext") == "AFTER_WAKEUP_RESET"
+                ),
+                None,
+            )
+            
+            # If no explicit morning context, return first entry as fallback
+            # (typically the morning reading is first in the list)
+            if morning_entry is None and data:
+                _LOGGER.debug(
+                    "No AFTER_WAKEUP_RESET context found, using first entry as fallback"
+                )
+                return data[0] if data else {}
+                
+            return morning_entry if morning_entry else {}
+        
+        # If response is a single dict, return it directly
         return data if isinstance(data, dict) else {}
 
-    async def get_respiration_data(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
-        """Get daily respiration data."""
-        if target_date is None:
-            target_date = date.today()
-
-        url = f"{RESPIRATION_URL}/{target_date.isoformat()}"
-        data = await self._request("GET", url)
-        return data if isinstance(data, dict) else {}
-
-    async def get_spo2_data(
-        self, target_date: date | None = None
-    ) -> dict[str, Any]:
-        """Get daily SpO2 data."""
-        if target_date is None:
-            target_date = date.today()
-
-        url = f"{SPO2_URL}/{target_date.isoformat()}"
-        data = await self._request("GET", url)
-        return data if isinstance(data, dict) else {}
 
     # ========== Write/Service Methods ==========
 
@@ -1246,6 +1063,144 @@ class GarminClient:
         _LOGGER.debug("Weigh-in payload: %s", payload)
         return await self._post_request(WEIGHT_URL, payload)
 
+    async def add_body_composition(
+        self,
+        weight: float,
+        timestamp: str | None = None,
+        percent_fat: float | None = None,
+        percent_hydration: float | None = None,
+        visceral_fat_mass: float | None = None,
+        bone_mass: float | None = None,
+        muscle_mass: float | None = None,
+        basal_met: float | None = None,
+        active_met: float | None = None,
+        physique_rating: float | None = None,
+        metabolic_age: float | None = None,
+        visceral_fat_rating: float | None = None,
+        bmi: float | None = None,
+    ) -> dict[str, Any]:
+        """Add body composition measurement.
+
+        Args:
+            weight: Weight in kg (required)
+            timestamp: ISO timestamp (defaults to now)
+            percent_fat: Body fat percentage
+            percent_hydration: Hydration percentage
+            visceral_fat_mass: Visceral fat mass in kg
+            bone_mass: Bone mass in kg
+            muscle_mass: Muscle mass in kg
+            basal_met: Basal metabolic rate in kcal
+            active_met: Active metabolic rate in kcal
+            physique_rating: Physique rating (1-9)
+            metabolic_age: Metabolic age in years
+            visceral_fat_rating: Visceral fat rating (1-59)
+            bmi: Body mass index
+        """
+        from datetime import datetime, timezone
+
+        _LOGGER.debug(
+            "add_body_composition called with weight=%s, timestamp=%s",
+            weight, timestamp
+        )
+
+        dt = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
+        dt_gmt = dt.astimezone(timezone.utc)
+
+        def fmt_ts(d: datetime) -> str:
+            """Format timestamp with milliseconds precision."""
+            return d.replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+
+        # Build payload - only include non-None values
+        payload: dict[str, Any] = {
+            "dateTimestamp": fmt_ts(dt),
+            "gmtTimestamp": fmt_ts(dt_gmt),
+            "weight": weight * 1000,  # Convert kg to grams
+            "sourceType": "MANUAL",
+        }
+
+        # Add optional fields if provided
+        if bmi is not None:
+            payload["bmi"] = bmi
+        if percent_fat is not None:
+            payload["bodyFat"] = percent_fat
+        if percent_hydration is not None:
+            payload["bodyWater"] = percent_hydration
+        if visceral_fat_mass is not None:
+            payload["visceralFat"] = visceral_fat_mass
+        if bone_mass is not None:
+            payload["boneMass"] = bone_mass * 1000  # Convert to grams
+        if muscle_mass is not None:
+            payload["muscleMass"] = muscle_mass * 1000  # Convert to grams
+        if basal_met is not None:
+            payload["basalMet"] = basal_met
+        if active_met is not None:
+            payload["activeMet"] = active_met
+        if physique_rating is not None:
+            payload["physiqueRating"] = physique_rating
+        if metabolic_age is not None:
+            payload["metabolicAge"] = metabolic_age
+        if visceral_fat_rating is not None:
+            payload["visceralFatRating"] = visceral_fat_rating
+
+        _LOGGER.debug("Body composition payload: %s", payload)
+        return await self._post_request(WEIGHT_URL, payload)
+
+    async def set_active_gear(
+        self,
+        activity_type: str,
+        setting: str,
+        gear_uuid: str | None = None,
+    ) -> dict[str, Any]:
+        """Set gear as active/default for an activity type.
+
+        Note: This service requires an entity target to identify which gear to set.
+        The gear_uuid is typically extracted from the target entity's attributes.
+
+        Args:
+            activity_type: Activity type (running, cycling, hiking, walking, swimming, other)
+            setting: One of 'set this as default, unset others', 'set as default', 'unset default'
+            gear_uuid: UUID of the gear (from entity target attributes)
+        """
+        if not gear_uuid:
+            raise ValueError("gear_uuid is required - target a gear sensor entity")
+
+        # Map activity type to Garmin's activityTypePk
+        activity_type_map = {
+            "running": 1,
+            "cycling": 2,
+            "walking": 3,
+            "hiking": 4,
+            "swimming": 5,
+            "other": 9,
+        }
+
+        activity_pk = activity_type_map.get(activity_type.lower())
+        if activity_pk is None:
+            raise ValueError(f"Unknown activity_type: {activity_type}")
+
+        _LOGGER.debug(
+            "set_active_gear called: activity_type=%s, setting=%s, gear_uuid=%s",
+            activity_type, setting, gear_uuid
+        )
+
+        # Determine the action based on setting
+        if setting == "set this as default, unset others":
+            # Set this gear as default and unset other defaults for this activity type
+            default_gear = True
+            # TODO: May need additional API call to unset other defaults
+        elif setting == "set as default":
+            default_gear = True
+        elif setting == "unset default":
+            default_gear = False
+        else:
+            raise ValueError(f"Unknown setting: {setting}")
+
+        # Use the gear defaults API
+        url = f"{GEAR_DEFAULTS_URL}/{gear_uuid}/activityTypes/{activity_pk}"
+        payload = {"defaultGear": default_gear}
+
+        return await self._put_request(url, payload)
+
     async def create_activity(
         self,
         activity_name: str,
@@ -1336,3 +1291,411 @@ class GarminClient:
         """
         url = f"{GEAR_LINK_URL}/{gear_uuid}/activity/{activity_id}"
         return await self._put_request(url)
+
+    # ========== Multi-Coordinator Fetch Methods ==========
+
+    async def fetch_core_data(
+        self, target_date: date | None = None
+    ) -> dict[str, Any]:
+        """Fetch core data: summary, daily steps, sleep.
+        
+        API calls: get_user_summary, get_daily_steps, get_sleep_data (3 calls)
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        yesterday_date = target_date - timedelta(days=1)
+        week_ago = target_date - timedelta(days=7)
+
+        # Core summary with midnight fallback
+        summary_raw = await self._safe_call(self._get_user_summary_raw, target_date)
+        today_data_not_ready = not summary_raw or summary_raw.get("dailyStepGoal") is None
+
+        if today_data_not_ready:
+            yesterday_summary = await self._safe_call(
+                self._get_user_summary_raw, yesterday_date
+            )
+            if yesterday_summary and yesterday_summary.get("dailyStepGoal") is not None:
+                summary_raw = yesterday_summary
+
+        summary_raw = summary_raw or {}
+
+        # Weekly averages
+        daily_steps = await self._safe_call(
+            self.get_daily_steps, week_ago, yesterday_date
+        )
+        yesterday_steps = None
+        yesterday_distance = None
+        weekly_step_avg = None
+        weekly_distance_avg = None
+
+        if daily_steps:
+            yesterday_data = daily_steps[-1]
+            yesterday_steps = yesterday_data.get("totalSteps")
+            yesterday_distance = yesterday_data.get("totalDistance")
+
+            total_steps = sum(d.get("totalSteps", 0) for d in daily_steps)
+            total_distance = sum(d.get("totalDistance", 0) for d in daily_steps)
+            days_count = len(daily_steps)
+            if days_count > 0:
+                weekly_step_avg = round(total_steps / days_count)
+                weekly_distance_avg = round(total_distance / days_count)
+
+        # Sleep data
+        sleep_data = await self._safe_call(self._get_sleep_data_raw, target_date)
+        sleep_score = None
+        sleep_time_seconds = None
+        deep_sleep_seconds = None
+        light_sleep_seconds = None
+        rem_sleep_seconds = None
+        awake_sleep_seconds = None
+
+        if sleep_data:
+            try:
+                daily_sleep = sleep_data.get("dailySleepDTO", {})
+                sleep_score = daily_sleep.get("sleepScores", {}).get("overall", {}).get("value")
+                sleep_time_seconds = daily_sleep.get("sleepTimeSeconds")
+                deep_sleep_seconds = daily_sleep.get("deepSleepSeconds")
+                light_sleep_seconds = daily_sleep.get("lightSleepSeconds")
+                rem_sleep_seconds = daily_sleep.get("remSleepSeconds")
+                awake_sleep_seconds = daily_sleep.get("awakeSleepSeconds")
+            except (KeyError, TypeError):
+                pass
+
+        data = {
+            **summary_raw,
+            "yesterdaySteps": yesterday_steps,
+            "yesterdayDistance": yesterday_distance,
+            "weeklyStepAvg": weekly_step_avg,
+            "weeklyDistanceAvg": weekly_distance_avg,
+            "sleepScore": sleep_score,
+            "sleepTimeSeconds": sleep_time_seconds,
+            "deepSleepSeconds": deep_sleep_seconds,
+            "lightSleepSeconds": light_sleep_seconds,
+            "remSleepSeconds": rem_sleep_seconds,
+            "awakeSleepSeconds": awake_sleep_seconds,
+        }
+        return _add_computed_fields(data)
+
+    async def fetch_activity_data(
+        self, target_date: date | None = None
+    ) -> dict[str, Any]:
+        """Fetch activity data: activities, polyline, HR zones, workouts.
+        
+        API calls: get_activities_by_date, get_activity_details, 
+                   get_activity_hr_in_timezones, get_workouts (4 calls)
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        week_ago = target_date - timedelta(days=7)
+
+        # Activities
+        activities_by_date = await self._safe_call(
+            self.get_activities_by_date, week_ago, target_date + timedelta(days=1)
+        )
+        last_activity: dict[str, Any] = {}
+        if activities_by_date:
+            last_activity = dict(activities_by_date[0])
+            activity_id = last_activity.get("activityId")
+            
+            # Fetch polyline
+            if last_activity.get("hasPolyline"):
+                try:
+                    activity_details = await self.get_activity_details(
+                        activity_id, 100, 4000
+                    )
+                    if activity_details:
+                        polyline_data = activity_details.get("geoPolylineDTO", {})
+                        raw_polyline = polyline_data.get("polyline", [])
+                        last_activity["polyline"] = [
+                            {"lat": p.get("lat"), "lon": p.get("lon")}
+                            for p in raw_polyline
+                            if p.get("lat") is not None and p.get("lon") is not None
+                        ]
+                except GarminAPIError as err:
+                    _LOGGER.debug("Failed to fetch polyline: %s", err)
+            
+            # Fetch HR zones
+            if activity_id:
+                hr_zones = await self._safe_call(
+                    self.get_activity_hr_in_timezones, activity_id
+                )
+                if hr_zones:
+                    last_activity["hrTimeInZones"] = hr_zones
+
+        # Workouts
+        workouts = await self._safe_call(self.get_workouts, 0, 10)
+        workouts = workouts or []
+
+        # Trim activities to essential fields
+        trimmed_activities = [_trim_activity(a) for a in (activities_by_date or [])]
+        trimmed_last_activity = _trim_activity(last_activity) if last_activity else {}
+
+        return {
+            "lastActivities": trimmed_activities,
+            "lastActivity": trimmed_last_activity,
+            "workouts": workouts,
+            "lastWorkout": workouts[0] if workouts else {},
+        }
+
+    async def fetch_training_data(
+        self, target_date: date | None = None
+    ) -> dict[str, Any]:
+        """Fetch training data: readiness, status, lactate, scores, HRV.
+        
+        API calls: get_training_readiness, get_morning_training_readiness,
+                   get_training_status, get_lactate_threshold, get_endurance_score,
+                   get_hill_score, get_hrv_data (7 calls)
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        training_readiness = await self._safe_call(
+            self.get_training_readiness, target_date
+        )
+        morning_training_readiness = await self._safe_call(
+            self.get_morning_training_readiness, target_date
+        )
+        training_status = await self._safe_call(self.get_training_status, target_date)
+        lactate_threshold = await self._safe_call(self.get_lactate_threshold)
+
+        endurance_data = await self._safe_call(self.get_endurance_score, target_date)
+        endurance_score: dict[str, Any] = {"overallScore": None}
+        if endurance_data and "overallScore" in endurance_data:
+            endurance_score = endurance_data
+
+        hill_data = await self._safe_call(self.get_hill_score, target_date)
+        hill_score: dict[str, Any] = {"overallScore": None}
+        if hill_data and "overallScore" in hill_data:
+            hill_score = hill_data
+
+        # HRV
+        hrv_data = await self._safe_call(self._get_hrv_data_raw, target_date)
+        hrv_status: dict[str, Any] = {"status": "unknown"}
+        if hrv_data and "hrvSummary" in hrv_data:
+            hrv_status = hrv_data["hrvSummary"]
+
+        data = {
+            "trainingReadiness": training_readiness or {},
+            "morningTrainingReadiness": morning_training_readiness or {},
+            "trainingStatus": training_status or {},
+            "lactateThreshold": lactate_threshold or {},
+            "enduranceScore": endurance_score,
+            "hillScore": hill_score,
+            "hrvStatus": hrv_status,
+        }
+        return _add_computed_fields(data)
+
+    async def fetch_body_data(
+        self, target_date: date | None = None
+    ) -> dict[str, Any]:
+        """Fetch body data: body composition, hydration, fitness age.
+        
+        API calls: get_body_composition, get_hydration_data, get_fitness_age (3 calls)
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        body_composition = await self._safe_call(self.get_body_composition, target_date)
+        body_composition = body_composition or {}
+
+        hydration = await self._safe_call(self.get_hydration_data, target_date)
+        hydration = hydration or {}
+
+        fitness_age = await self._safe_call(self.get_fitness_age, target_date)
+        fitness_age = fitness_age or {}
+
+        data = {
+            **body_composition,
+            **hydration,
+            **fitness_age,
+        }
+        return _add_computed_fields(data)
+
+    async def fetch_goals_data(self) -> dict[str, Any]:
+        """Fetch goals data: goals, badges.
+        
+        API calls: get_goals×3, get_earned_badges (4 calls)
+        """
+        active_goals = await self._safe_call(self.get_goals, "active")
+        future_goals = await self._safe_call(self.get_goals, "future")
+        past_goals = await self._safe_call(self.get_goals, "past")
+
+        raw_badges = await self._safe_call(self.get_earned_badges)
+        raw_badges = raw_badges or []
+        
+        # Calculate points before trimming
+        user_points = sum(
+            badge.get("badgePoints", 0) * badge.get("badgeEarnedNumber", 1)
+            for badge in raw_badges
+        )
+        level_points = {
+            1: 0, 2: 20, 3: 60, 4: 140, 5: 300,
+            6: 600, 7: 1200, 8: 2400, 9: 4800, 10: 9600,
+        }
+        user_level = 1
+        for level, points in level_points.items():
+            if user_points >= points:
+                user_level = level
+
+        # Trim badges to only essential fields (reduces data from ~30 to 4 fields per badge)
+        badges = [
+            {
+                "badgeName": b.get("badgeName"),
+                "badgePoints": b.get("badgePoints"),
+                "badgeEarnedDate": b.get("badgeEarnedDate"),
+                "badgeEarnedNumber": b.get("badgeEarnedNumber"),
+            }
+            for b in raw_badges
+        ]
+
+        return {
+            "activeGoals": active_goals or [],
+            "futureGoals": future_goals or [],
+            "goalsHistory": (past_goals or [])[:10],
+            "badges": badges,
+            "userPoints": user_points,
+            "userLevel": user_level,
+        }
+
+    async def fetch_gear_data(
+        self, timezone: str | None = None
+    ) -> dict[str, Any]:
+        """Fetch gear data: gear, defaults, stats, alarms.
+        
+        API calls: get_gear, get_gear_defaults, get_gear_stats×N, 
+                   get_device_alarms (4+ calls)
+        """
+        # Get user profile ID for gear API
+        profile = await self._safe_call(self.get_user_profile)
+        user_profile_id = profile.profile_id if profile else None
+
+        gear: list[dict[str, Any]] = []
+        gear_stats: list[dict[str, Any]] = []
+        gear_defaults: dict[str, Any] = {}
+
+        if user_profile_id:
+            gear = await self._safe_call(self.get_gear, user_profile_id) or []
+            gear_defaults = await self._safe_call(
+                self.get_gear_defaults, user_profile_id
+            ) or []
+
+            activity_type_names = {
+                1: "running", 2: "cycling", 3: "walking", 4: "hiking",
+                5: "swimming", 6: "gym", 7: "yoga", 9: "other",
+            }
+            gear_default_activities: dict[str, list[str]] = {}
+            if isinstance(gear_defaults, list):
+                for default in gear_defaults:
+                    uuid = default.get("uuid")
+                    activity_pk = default.get("activityTypePk")
+                    if uuid and activity_pk and default.get("defaultGear"):
+                        if uuid not in gear_default_activities:
+                            gear_default_activities[uuid] = []
+                        activity_name = activity_type_names.get(activity_pk, f"type_{activity_pk}")
+                        gear_default_activities[uuid].append(activity_name)
+
+            if gear:
+                for gear_item in gear:
+                    gear_uuid = gear_item.get("uuid")
+                    if gear_uuid:
+                        stats = await self._safe_call(self.get_gear_stats, gear_uuid)
+                        if stats:
+                            stats["gearUuid"] = gear_uuid
+                            stats["gearName"] = gear_item.get("displayName", "Unknown")
+                            stats["gearTypeName"] = gear_item.get("gearTypeName", "Unknown")
+                            stats["gearStatusName"] = gear_item.get("gearStatusName", "active")
+                            stats["gearMakeName"] = gear_item.get("gearMakeName")
+                            stats["gearModelName"] = gear_item.get("gearModelName")
+                            stats["customMakeModel"] = gear_item.get("customMakeModel")
+                            stats["dateBegin"] = gear_item.get("dateBegin")
+                            stats["dateEnd"] = gear_item.get("dateEnd")
+                            stats["maximumMeters"] = gear_item.get("maximumMeters")
+                            stats["defaultForActivity"] = gear_default_activities.get(gear_uuid, [])
+                            gear_stats.append(stats)
+
+        # Alarms
+        alarms = await self._safe_call(self.get_device_alarms)
+        next_alarms = self._calculate_next_active_alarms(alarms, timezone)
+
+        return {
+            "gear": gear,
+            "gearStats": gear_stats,
+            "gearDefaults": gear_defaults,
+            "nextAlarm": next_alarms,
+        }
+
+    async def fetch_blood_pressure_data(
+        self, target_date: date | None = None
+    ) -> dict[str, Any]:
+        """Fetch blood pressure data.
+        
+        API calls: get_blood_pressure (1 call)
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        blood_pressure_data: dict[str, Any] = {}
+        bp_response = await self._safe_call(
+            self.get_blood_pressure,
+            target_date - timedelta(days=30),
+            target_date,
+        )
+        if bp_response and isinstance(bp_response, dict):
+            summaries = bp_response.get("measurementSummaries", [])
+            
+            all_measurements: list[dict[str, Any]] = []
+            for summary in summaries:
+                measurements = summary.get("measurements", [])
+                all_measurements.extend(measurements)
+            
+            if all_measurements:
+                latest_bp = max(
+                    all_measurements,
+                    key=lambda m: m.get("measurementTimestampLocal", ""),
+                )
+                blood_pressure_data = {
+                    "bpSystolic": latest_bp.get("systolic"),
+                    "bpDiastolic": latest_bp.get("diastolic"),
+                    "bpPulse": latest_bp.get("pulse"),
+                    "bpMeasurementTime": latest_bp.get("measurementTimestampLocal"),
+                    "bpCategory": latest_bp.get("category"),
+                    "bpCategoryName": latest_bp.get("categoryName"),
+                }
+            elif summaries:
+                latest_summary = max(
+                    summaries,
+                    key=lambda s: s.get("startDate", ""),
+                )
+                blood_pressure_data = {
+                    "bpSystolic": latest_summary.get("highSystolic"),
+                    "bpDiastolic": latest_summary.get("highDiastolic"),
+                    "bpPulse": None,
+                    "bpMeasurementTime": latest_summary.get("startDate"),
+                    "bpCategory": latest_summary.get("category"),
+                    "bpCategoryName": latest_summary.get("categoryName"),
+                }
+
+        return blood_pressure_data
+
+    async def fetch_menstrual_data(
+        self, target_date: date | None = None
+    ) -> dict[str, Any]:
+        """Fetch menstrual data: day summary and calendar predictions.
+        
+        API calls: get_menstrual_data, get_menstrual_calendar (2 calls)
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        menstrual_data = await self._safe_call(self.get_menstrual_data, target_date)
+        menstrual_data = menstrual_data or {}
+        
+        menstrual_calendar = await self._safe_call(self.get_menstrual_calendar)
+        menstrual_calendar = menstrual_calendar or {}
+
+        return {
+            "menstrualData": menstrual_data,
+            "menstrualCalendar": menstrual_calendar,
+        }

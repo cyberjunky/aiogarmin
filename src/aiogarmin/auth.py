@@ -76,6 +76,28 @@ class GarminAuth:
             headers["Referer"] = referrer
         return headers
 
+    async def get_auth_headers(self) -> dict[str, str]:
+        """Get authenticated request headers with Bearer token.
+
+        Returns:
+            Headers dict with Authorization Bearer token
+        """
+        if not self._oauth2_token:
+            raise GarminAuthError("No OAuth2 token - authentication required")
+
+        access_token = self._oauth2_token.get("access_token", "")
+        if not access_token:
+            raise GarminAuthError("No access token in OAuth2 token")
+
+        return {
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": USER_AGENT,
+        }
+
+    async def refresh(self) -> AuthResult:
+        """Refresh OAuth2 token. Alias for refresh_tokens()."""
+        return await self.refresh_tokens()
+
     async def _fetch_consumer_keys(self) -> None:
         """Fetch OAuth consumer keys from S3."""
         if self._consumer_key and self._consumer_secret:
@@ -164,8 +186,9 @@ class GarminAuth:
             # Check for MFA
             if title and "MFA" in title:
                 _LOGGER.debug("MFA required")
-                # Store state for MFA completion
+                # Store state for MFA completion - including CSRF for retry
                 self._signin_params = signin_params
+                self._mfa_csrf_token = self._extract_csrf(self._last_response_text)
                 raise GarminMFARequired("mfa_required")
 
             # Check for success
@@ -198,9 +221,16 @@ class GarminAuth:
         _LOGGER.debug("Completing MFA verification")
 
         try:
+            # Try to extract new CSRF from last response, fallback to stored token
             csrf_token = self._extract_csrf(self._last_response_text)
             if not csrf_token:
-                raise GarminAuthError("Could not extract CSRF token for MFA")
+                csrf_token = getattr(self, "_mfa_csrf_token", None)
+            if not csrf_token:
+                # No token available - session truly expired
+                self._clear_mfa_session()
+                raise GarminAuthError(
+                    "MFA session expired - please restart login"
+                )
 
             # Build referrer URL (the MFA page we're on)
             sso_url = f"https://sso.{self._domain}/sso/signin"
@@ -226,13 +256,12 @@ class GarminAuth:
                 headers=headers,
             ) as resp:
                 self._last_response_text = await resp.text()
-                _LOGGER.debug("MFA response length: %d", len(self._last_response_text))
 
             # Check for success - either title says Success OR we have a ticket
             title = self._extract_title(self._last_response_text)
             ticket = self._extract_ticket(self._last_response_text)
 
-            _LOGGER.warning("MFA title: %s, ticket found: %s", title, bool(ticket))
+            _LOGGER.debug("MFA title: %s, ticket found: %s", title, bool(ticket))
 
             if ticket:
                 # We have a ticket, MFA succeeded
@@ -241,24 +270,18 @@ class GarminAuth:
             if title == "Success":
                 return await self._complete_login()
 
-            # Check for error messages in response - dump to file for debugging
-            _LOGGER.warning("MFA failed - dumping response to /tmp/mfa_response.html")
-            try:
-                with open("/tmp/mfa_response.html", "w") as f:
-                    f.write(self._last_response_text)
-            except Exception:
-                pass
-
-            # Try to extract error message
+            # Try to extract error message from response
+            error_msg = "Invalid MFA code"
             error_match = re.search(
                 r'class="[^"]*error[^"]*"[^>]*>([^<]+)<',
                 self._last_response_text,
                 re.IGNORECASE,
             )
             if error_match:
-                _LOGGER.error("Error message: %s", error_match.group(1).strip())
+                error_msg = error_match.group(1).strip()
+                _LOGGER.debug("MFA error from page: %s", error_msg)
 
-            raise GarminAuthError(f"MFA failed: title={title}, no ticket found")
+            raise GarminAuthError(error_msg)
 
         except GarminAuthError:
             raise
@@ -395,3 +418,9 @@ class GarminAuth:
         """Extract ticket from response HTML."""
         match = TICKET_RE.search(html)
         return match.group(1) if match else None
+
+    def _clear_mfa_session(self) -> None:
+        """Clear MFA session state - forces restart of login flow."""
+        if hasattr(self, "_signin_params"):
+            del self._signin_params
+        self._last_response_text = ""
