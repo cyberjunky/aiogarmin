@@ -61,13 +61,13 @@ BADGES_URL = f"{GARMIN_CONNECT_API}/badge-service/badge/earned"
 
 # Gear endpoints
 GEAR_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/filterGear"
+GEAR_BASE_URL = f"{GARMIN_CONNECT_API}/gear-service/gear"
 GEAR_STATS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/stats"
 GEAR_DEFAULTS_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/user"
 
 # Health endpoints
 BLOOD_PRESSURE_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure/range"
 BLOOD_PRESSURE_SET_URL = f"{GARMIN_CONNECT_API}/bloodpressure-service/bloodpressure"
-WEIGHT_URL = f"{GARMIN_CONNECT_API}/weight-service/user-weight"
 MENSTRUAL_URL = f"{GARMIN_CONNECT_API}/periodichealth-service/menstrualcycle/dayview"
 MENSTRUAL_CALENDAR_URL = f"{GARMIN_CONNECT_API}/periodichealth-service/menstrualcycle/calendar"
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
@@ -23,6 +24,7 @@ from .const import (
     GARMIN_CN_CONNECT_API,
     GARMIN_CONNECT_API,
     GEAR_DEFAULTS_URL,
+    GEAR_BASE_URL,
     GEAR_LINK_URL,
     GEAR_STATS_URL,
     GEAR_URL,
@@ -42,7 +44,6 @@ from .const import (
     UPLOAD_URL,
     USER_PROFILE_URL,
     USER_SUMMARY_URL,
-    WEIGHT_URL,
     WORKOUTS_URL,
 )
 from .exceptions import GarminAPIError, GarminAuthError
@@ -932,6 +933,89 @@ class GarminClient:
 
             return await response.json()
 
+    async def _delete_request(self, url: str) -> dict[str, Any]:
+        """Make a DELETE request to the Garmin API."""
+        headers = await self._auth.get_auth_headers()
+        headers.update(DEFAULT_HEADERS)
+
+        full_url = self._get_url(url)
+        _LOGGER.debug("DELETE %s", full_url)
+
+        async with self._session.delete(full_url, headers=headers) as response:
+            if response.status == 401:
+                await self._auth.refresh()
+                headers = await self._auth.get_auth_headers()
+                headers.update(DEFAULT_HEADERS)
+                async with self._session.delete(
+                    full_url, headers=headers
+                ) as retry_response:
+                    if retry_response.status not in (200, 204):
+                        raise GarminAPIError(
+                            f"DELETE failed: {retry_response.status}"
+                        )
+                    if retry_response.status == 204:
+                        return {}
+                    return await retry_response.json()
+
+            if response.status not in (200, 204):
+                raise GarminAPIError(f"DELETE failed: {response.status}")
+
+            if response.status == 204:
+                return {}
+
+            return await response.json()
+
+    async def _upload_fit_file(
+        self, fit_data: bytes, filename: str = "data.fit"
+    ) -> dict[str, Any]:
+        """Upload FIT file data to Garmin Connect.
+
+        Args:
+            fit_data: FIT file bytes
+            filename: Name for the upload
+        """
+        import aiohttp
+
+        headers = await self._auth.get_auth_headers()
+        headers.update(DEFAULT_HEADERS)
+        # Remove Content-Type - will be set by aiohttp for multipart
+
+        full_url = self._get_url(UPLOAD_URL)
+        _LOGGER.debug("Uploading FIT file: %s (%d bytes)", filename, len(fit_data))
+
+        # Create multipart form data
+        form_data = aiohttp.FormData()
+        form_data.add_field(
+            "file",
+            fit_data,
+            filename=filename,
+            content_type="application/octet-stream",
+        )
+
+        async with self._session.post(
+            full_url, headers=headers, data=form_data
+        ) as response:
+            if response.status == 401:
+                # Retry after refresh
+                await self._auth.refresh()
+                headers = await self._auth.get_auth_headers()
+                headers.update(DEFAULT_HEADERS)
+                async with self._session.post(
+                    full_url, headers=headers, data=form_data
+                ) as retry_response:
+                    if retry_response.status not in (200, 201):
+                        text = await retry_response.text()
+                        raise GarminAPIError(
+                            f"FIT upload failed: {retry_response.status} - {text}"
+                        )
+                    return await retry_response.json()
+
+            if response.status not in (200, 201):
+                text = await response.text()
+                raise GarminAPIError(f"FIT upload failed: {response.status} - {text}")
+
+            return await response.json()
+
     async def set_blood_pressure(
         self,
         systolic: int,
@@ -974,42 +1058,6 @@ class GarminClient:
         _LOGGER.debug("Blood pressure payload: %s", payload)
         return await self._post_request(BLOOD_PRESSURE_SET_URL, payload)
 
-    async def add_weigh_in(
-        self,
-        weight: float,
-        unit: str = "kg",
-        timestamp: str | None = None,
-    ) -> dict[str, Any]:
-        """Add a weigh-in measurement.
-
-        Args:
-            weight: Weight value
-            unit: Weight unit ('kg' or 'lbs')
-            timestamp: ISO timestamp (defaults to now)
-        """
-        from datetime import datetime, timezone
-
-        _LOGGER.debug("add_weigh_in called with weight=%s, unit=%s, timestamp=%s",
-                      weight, unit, timestamp)
-
-        dt = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
-        dt_gmt = dt.astimezone(timezone.utc)
-
-        def fmt_ts(d: datetime) -> str:
-            """Format timestamp with milliseconds precision."""
-            return d.replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
-
-        payload = {
-            "dateTimestamp": fmt_ts(dt),
-            "gmtTimestamp": fmt_ts(dt_gmt),
-            "unitKey": unit,
-            "sourceType": "MANUAL",
-            "value": weight,
-        }
-
-        _LOGGER.debug("Weigh-in payload: %s", payload)
-        return await self._post_request(WEIGHT_URL, payload)
-
     async def add_body_composition(
         self,
         weight: float,
@@ -1026,74 +1074,61 @@ class GarminClient:
         visceral_fat_rating: float | None = None,
         bmi: float | None = None,
     ) -> dict[str, Any]:
-        """Add body composition measurement.
-
-        Note: The Garmin Connect web API only supports basic weight entry via JSON POST.
-        Full body composition data (body fat, muscle mass, etc.) requires FIT file upload.
-        This method will add the weight entry. Additional fields are logged but not sent.
+        """Add body composition measurement via FIT file upload.
 
         Args:
             weight: Weight in kg (required)
             timestamp: ISO timestamp (defaults to now)
-            percent_fat: Body fat percentage (not supported via JSON API)
-            percent_hydration: Hydration percentage (not supported via JSON API)
-            visceral_fat_mass: Visceral fat mass in kg (not supported via JSON API)
-            bone_mass: Bone mass in kg (not supported via JSON API)
-            muscle_mass: Muscle mass in kg (not supported via JSON API)
-            basal_met: Basal metabolic rate in kcal (not supported via JSON API)
-            active_met: Active metabolic rate in kcal (not supported via JSON API)
-            physique_rating: Physique rating (1-9) (not supported via JSON API)
-            metabolic_age: Metabolic age in years (not supported via JSON API)
-            visceral_fat_rating: Visceral fat rating (1-59) (not supported via JSON API)
-            bmi: Body mass index (not supported via JSON API)
+            percent_fat: Body fat percentage
+            percent_hydration: Hydration percentage
+            visceral_fat_mass: Visceral fat mass in kg
+            bone_mass: Bone mass in kg
+            muscle_mass: Muscle mass in kg
+            basal_met: Basal metabolic rate in kcal
+            active_met: Active metabolic rate in kcal
+            physique_rating: Physique rating (1-9)
+            metabolic_age: Metabolic age in years
+            visceral_fat_rating: Visceral fat rating (1-59)
+            bmi: Body mass index
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
+
+        from .fit import FitEncoderWeight
 
         _LOGGER.debug(
             "add_body_composition called with weight=%s, timestamp=%s",
             weight, timestamp
         )
 
-        # Log if extra fields were provided (they won't be sent)
-        extra_fields = {
-            "percent_fat": percent_fat,
-            "percent_hydration": percent_hydration,
-            "visceral_fat_mass": visceral_fat_mass,
-            "bone_mass": bone_mass,
-            "muscle_mass": muscle_mass,
-            "basal_met": basal_met,
-            "active_met": active_met,
-            "physique_rating": physique_rating,
-            "metabolic_age": metabolic_age,
-            "visceral_fat_rating": visceral_fat_rating,
-            "bmi": bmi,
-        }
-        provided_extras = {k: v for k, v in extra_fields.items() if v is not None}
-        if provided_extras:
-            _LOGGER.warning(
-                "Body composition extra fields provided but not supported via JSON API "
-                "(requires FIT file upload): %s",
-                provided_extras
-            )
-
         dt = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
-        dt_gmt = dt.astimezone(timezone.utc)
 
-        def fmt_ts(d: datetime) -> str:
-            """Format timestamp with milliseconds precision."""
-            return d.replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+        # Build FIT file
+        fit_encoder = FitEncoderWeight()
+        fit_encoder.write_file_info()
+        fit_encoder.write_file_creator()
+        fit_encoder.write_device_info(dt)
+        fit_encoder.write_weight_scale(
+            timestamp=dt,
+            weight=weight,
+            percent_fat=percent_fat,
+            percent_hydration=percent_hydration,
+            visceral_fat_mass=visceral_fat_mass,
+            bone_mass=bone_mass,
+            muscle_mass=muscle_mass,
+            basal_met=basal_met,
+            active_met=active_met,
+            physique_rating=physique_rating,
+            metabolic_age=metabolic_age,
+            visceral_fat_rating=visceral_fat_rating,
+            bmi=bmi,
+        )
+        fit_encoder.finish()
 
-        # Use same payload format as add_weigh_in which works
-        payload = {
-            "dateTimestamp": fmt_ts(dt),
-            "gmtTimestamp": fmt_ts(dt_gmt),
-            "unitKey": "kg",
-            "sourceType": "MANUAL",
-            "value": weight,
-        }
-
-        _LOGGER.debug("Body composition payload: %s", payload)
-        return await self._post_request(WEIGHT_URL, payload)
+        # Upload FIT file
+        return await self._upload_fit_file(
+            fit_encoder.getvalue(),
+            "body_composition.fit"
+        )
 
     async def set_active_gear(
         self,
@@ -1114,7 +1149,26 @@ class GarminClient:
         if not gear_uuid:
             raise ValueError("gear_uuid is required - target a gear sensor entity")
 
-        # Map activity type to Garmin's activityTypePk
+        _LOGGER.debug(
+            "set_active_gear called: activity_type=%s, setting=%s, gear_uuid=%s",
+            activity_type, setting, gear_uuid
+        )
+
+        # Determine the action based on setting
+        if setting == "set this as default, unset others":
+            default_gear = True
+        elif setting == "set as default":
+            default_gear = True
+        elif setting == "unset default":
+            default_gear = False
+        else:
+            raise ValueError(f"Unknown setting: {setting}")
+
+        # Use consistent URL format with python-garminconnect:
+        # PUT gear-service/gear/{gearUUID}/activityType/{activityTypeId}/default/true
+        # DELETE gear-service/gear/{gearUUID}/activityType/{activityTypeId}
+        # Note: activityType must be numeric (1=running, 2=cycling, etc.)
+        
         activity_type_map = {
             "running": 1,
             "cycling": 2,
@@ -1123,33 +1177,16 @@ class GarminClient:
             "swimming": 5,
             "other": 9,
         }
+        activity_type_id = activity_type_map.get(activity_type.lower(), activity_type)
+        
+        url_path = f"/gear-service/gear/{gear_uuid}/activityType/{activity_type_id}"
 
-        activity_pk = activity_type_map.get(activity_type.lower())
-        if activity_pk is None:
-            raise ValueError(f"Unknown activity_type: {activity_type}")
-
-        _LOGGER.debug(
-            "set_active_gear called: activity_type=%s, setting=%s, gear_uuid=%s",
-            activity_type, setting, gear_uuid
-        )
-
-        # Determine the action based on setting
-        if setting == "set this as default, unset others":
-            # Set this gear as default and unset other defaults for this activity type
-            default_gear = True
-            # TODO: May need additional API call to unset other defaults
-        elif setting == "set as default":
-            default_gear = True
-        elif setting == "unset default":
-            default_gear = False
+        if default_gear:
+            url = f"{GARMIN_CONNECT_API}{url_path}/default/true"
+            return await self._put_request(url)
         else:
-            raise ValueError(f"Unknown setting: {setting}")
-
-        # Use the gear defaults API
-        url = f"{GEAR_DEFAULTS_URL}/{gear_uuid}/activityTypes/{activity_pk}"
-        payload = {"defaultGear": default_gear}
-
-        return await self._put_request(url, payload)
+            url = f"{GARMIN_CONNECT_API}{url_path}"
+            return await self._delete_request(url=url)
 
     async def create_activity(
         self,
@@ -1197,7 +1234,6 @@ class GarminClient:
         Args:
             file_path: Path to the activity file
         """
-        import os
         from pathlib import Path
 
         path = Path(file_path)
@@ -1213,22 +1249,77 @@ class GarminClient:
             )
 
         headers = await self._auth.get_auth_headers()
-        headers.update(DEFAULT_HEADERS)
-        # Don't set Content-Type for multipart
+        # For multipart upload, only set User-Agent - let aiohttp handle Content-Type
+        headers["User-Agent"] = "GCM-iOS-5.7.2.1"
 
-        with path.open("rb") as f:
-            data = {"file": f}
-            full_url = self._get_url(UPLOAD_URL)
-            _LOGGER.debug("Uploading activity file: %s", path.name)
+        # Read file content (do this synchronously but it's a small file)
+        file_bytes = await asyncio.get_event_loop().run_in_executor(
+            None, path.read_bytes
+        )
+        
+        from aiohttp import FormData
+        data = FormData()
+        # Match requests library multipart format
+        content_type_map = {
+            ".fit": "application/octet-stream",
+            ".gpx": "application/gpx+xml",
+            ".tcx": "application/vnd.garmin.tcx+xml",
+        }
+        content_type = content_type_map.get(path.suffix.lower(), "application/octet-stream")
+        data.add_field('file', file_bytes, filename=path.name, content_type=content_type)
+        
+        full_url = self._get_url(UPLOAD_URL)
+        _LOGGER.debug("Uploading activity file: %s", path.name)
 
-            async with self._session.post(
-                full_url, headers=headers, data=data
-            ) as response:
-                if response.status not in (200, 201):
-                    raise GarminAPIError(
-                        f"Upload failed: {response.status}"
-                    )
-                return await response.json()
+        async with self._session.post(
+            full_url, headers=headers, data=data
+        ) as response:
+            # Handle 403 by refreshing token and retrying
+            if response.status == 403:
+                _LOGGER.debug("Upload got 403, refreshing token and retrying")
+                await self._auth.refresh()
+                headers = await self._auth.get_auth_headers()
+                headers["User-Agent"] = "GCM-iOS-5.7.2.1"
+                data = FormData()
+                data.add_field('file', file_bytes, filename=path.name, content_type=content_type)
+                async with self._session.post(
+                    full_url, headers=headers, data=data
+                ) as retry_response:
+                    if retry_response.status not in (200, 201, 400):
+                        body = await retry_response.text()
+                        raise GarminAPIError(f"Upload failed: {retry_response.status}, body: {body[:500]}")
+                    try:
+                        body = await retry_response.json()
+                    except Exception:
+                        body = {"raw": await retry_response.text()}
+                    return body
+            
+            # Parse response (may be JSON or error page)
+            try:
+                body = await response.json()
+            except Exception:
+                error_text = await response.text()
+                raise GarminAPIError(f"Upload failed: {response.status}, body: {error_text[:500]}")
+            
+            # 400 with uploadId means file was accepted but has validation issues
+            if response.status == 400 and body.get("detailedImportResult", {}).get("uploadId"):
+                _LOGGER.warning("Upload accepted with warnings: %s", body)
+                return body
+            
+            # Handle 409 (duplicate) and other errors with friendly messages
+            if response.status not in (200, 201, 202):
+                result = body.get("detailedImportResult", {})
+                failures = result.get("failures", [])
+                if failures:
+                    # Extract readable messages from failures
+                    messages = []
+                    for failure in failures:
+                        for msg in failure.get("messages", []):
+                            messages.append(msg.get("content", "Unknown error"))
+                    error_msg = "; ".join(messages) if messages else "Unknown error"
+                    raise GarminAPIError(f"Upload failed: {error_msg}")
+                raise GarminAPIError(f"Upload failed: {response.status}, body: {body}")
+            return body
 
     async def add_gear_to_activity(
         self, gear_uuid: str, activity_id: int
