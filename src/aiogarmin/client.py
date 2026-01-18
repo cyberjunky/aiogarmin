@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .const import (
@@ -91,6 +91,46 @@ ACTIVITY_ESSENTIAL_KEYS = {
     "polyline",
 }
 
+# Known datetime fields (ISO format with time) to convert to Python datetime
+DATETIME_FIELDS = {
+    "startTimeLocal",
+    "startTimeGMT",
+    "measurementTimestampLocal",
+    "measurementTimestampGMT",
+    "bpMeasurementTime",
+    "sleepStartTimestampLocal",
+    "sleepEndTimestampLocal",
+}
+
+# Known date fields (ISO format, date only) to convert to Python date
+DATE_FIELDS = {
+    "badgeEarnedDate",
+    "calendarDate",
+}
+
+
+def _convert_datetime_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert ISO date/time strings to Python datetime/date objects.
+
+    This reduces boilerplate in Home Assistant integrations by providing
+    native Python types instead of strings.
+    """
+    from contextlib import suppress
+
+    result = dict(data)
+
+    for key in DATETIME_FIELDS:
+        if key in result and isinstance(result[key], str):
+            with suppress(ValueError):
+                result[key] = datetime.fromisoformat(result[key])
+
+    for key in DATE_FIELDS:
+        if key in result and isinstance(result[key], str):
+            with suppress(ValueError):
+                result[key] = date.fromisoformat(result[key])
+
+    return result
+
 
 def _trim_activity(activity: dict[str, Any]) -> dict[str, Any]:
     """Trim activity to essential fields only to reduce data size."""
@@ -119,6 +159,7 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Add pre-computed fields for common unit conversions and nested extractions.
 
     This simplifies the Home Assistant integration by providing ready-to-use values.
+    Also converts ISO date/time strings to Python datetime/date objects.
     """
     result = dict(data)
 
@@ -207,7 +248,16 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
             result.get("stressQualifier") or ""
         ).capitalize()
 
-    return result
+    # === Intensity minutes: calculate total (moderate + vigorous*2) ===
+    moderate = result.get("moderateIntensityMinutes")
+    vigorous = result.get("vigorousIntensityMinutes")
+    if moderate is not None or vigorous is not None:
+        result["totalIntensityMinutes"] = (moderate or 0) + ((vigorous or 0) * 2)
+    else:
+        result["totalIntensityMinutes"] = None
+
+    # Convert ISO date/time strings to Python datetime/date objects
+    return _convert_datetime_fields(result)
 
 
 class GarminClient:
