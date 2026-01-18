@@ -92,11 +92,15 @@ ACTIVITY_ESSENTIAL_KEYS = {
 }
 
 # Known datetime fields (ISO format with time) to convert to Python datetime
-DATETIME_FIELDS = {
-    "startTimeLocal",
+# GMT fields will have UTC timezone attached; Local fields remain naive
+DATETIME_FIELDS_GMT = {
     "startTimeGMT",
-    "measurementTimestampLocal",
     "measurementTimestampGMT",
+}
+
+DATETIME_FIELDS_LOCAL = {
+    "startTimeLocal",
+    "measurementTimestampLocal",
     "bpMeasurementTime",
     "sleepStartTimestampLocal",
     "sleepEndTimestampLocal",
@@ -114,12 +118,27 @@ def _convert_datetime_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     This reduces boilerplate in Home Assistant integrations by providing
     native Python types instead of strings.
+
+    - GMT fields get UTC timezone attached
+    - Local fields remain naive (wall-clock time in user's timezone)
     """
     from contextlib import suppress
 
     result = dict(data)
 
-    for key in DATETIME_FIELDS:
+    # GMT fields: parse and attach UTC timezone
+    for key in DATETIME_FIELDS_GMT:
+        if key in result and isinstance(result[key], str):
+            with suppress(ValueError):
+                parsed = datetime.fromisoformat(result[key])
+                # Attach UTC timezone if naive
+                if parsed.tzinfo is None:
+                    result[key] = parsed.replace(tzinfo=UTC)
+                else:
+                    result[key] = parsed
+
+    # Local fields: keep naive (represents wall-clock time)
+    for key in DATETIME_FIELDS_LOCAL:
         if key in result and isinstance(result[key], str):
             with suppress(ValueError):
                 result[key] = datetime.fromisoformat(result[key])
