@@ -1,5 +1,7 @@
 # Custom
 docs/
+.garmin_tokens.json
+garmin_data_dump.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
