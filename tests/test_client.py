@@ -8,8 +8,11 @@ import pytest
 from aiogarmin import GarminAuth, GarminClient
 from aiogarmin.const import (
     ACTIVITIES_URL,
+    DAILY_STEPS_URL,
     DEVICES_URL,
+    SLEEP_URL,
     USER_PROFILE_URL,
+    USER_SUMMARY_URL,
 )
 from aiogarmin.exceptions import GarminAuthError
 
@@ -95,3 +98,82 @@ class TestGarminClient:
         assert len(devices) == 1
         assert devices[0]["displayName"] == "Forerunner 955"
         assert devices[0]["batteryLevel"] == 85
+
+    async def test_fetch_core_data_sleep_fields(self, session, mock_aioresponse):
+        """Test fetch_core_data returns all sleep fields including nap and unmeasurable."""
+        # Mock user profile for sleep URL
+        mock_aioresponse.get(
+            USER_PROFILE_URL,
+            payload={
+                "id": 12345,
+                "profileId": 67890,
+                "displayName": "testuser",
+            },
+        )
+
+        # Mock user summary
+        summary_pattern = re.compile(rf"^{re.escape(USER_SUMMARY_URL)}.*$")
+        mock_aioresponse.get(
+            summary_pattern,
+            payload={
+                "dailyStepGoal": 10000,
+                "totalSteps": 5000,
+                "totalDistanceMeters": 4000,
+            },
+        )
+
+        # Mock daily steps
+        steps_pattern = re.compile(rf"^{re.escape(DAILY_STEPS_URL)}.*$")
+        mock_aioresponse.get(
+            steps_pattern,
+            payload=[
+                {
+                    "totalSteps": 8000,
+                    "totalDistance": 6000,
+                    "calendarDate": "2026-01-23",
+                },
+            ],
+        )
+
+        # Mock sleep data with all sleep state fields
+        sleep_pattern = re.compile(rf"^{re.escape(SLEEP_URL)}.*$")
+        mock_aioresponse.get(
+            sleep_pattern,
+            payload={
+                "dailySleepDTO": {
+                    "sleepTimeSeconds": 28800,  # 8 hours
+                    "deepSleepSeconds": 7200,  # 2 hours
+                    "lightSleepSeconds": 14400,  # 4 hours
+                    "remSleepSeconds": 5400,  # 1.5 hours
+                    "awakeSleepSeconds": 1800,  # 30 min
+                    "napTimeSeconds": 3600,  # 1 hour
+                    "unmeasurableSleepSeconds": 600,  # 10 min
+                    "sleepScores": {
+                        "overall": {"value": 85},
+                    },
+                },
+            },
+        )
+
+        auth = GarminAuth(session, oauth2_token={"access_token": "token"})
+        client = GarminClient(session, auth)
+        data = await client.fetch_core_data()
+
+        # Verify all sleep fields are present
+        assert data["sleepScore"] == 85
+        assert data["sleepTimeSeconds"] == 28800
+        assert data["deepSleepSeconds"] == 7200
+        assert data["lightSleepSeconds"] == 14400
+        assert data["remSleepSeconds"] == 5400
+        assert data["awakeSleepSeconds"] == 1800
+        assert data["napTimeSeconds"] == 3600
+        assert data["unmeasurableSleepSeconds"] == 600
+
+        # Verify computed minutes fields are present
+        assert data["sleepTimeMinutes"] == 480  # 28800 / 60
+        assert data["deepSleepMinutes"] == 120  # 7200 / 60
+        assert data["lightSleepMinutes"] == 240  # 14400 / 60
+        assert data["remSleepMinutes"] == 90  # 5400 / 60
+        assert data["awakeSleepMinutes"] == 30  # 1800 / 60
+        assert data["napTimeMinutes"] == 60  # 3600 / 60
+        assert data["unmeasurableSleepMinutes"] == 10  # 600 / 60

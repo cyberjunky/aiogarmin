@@ -91,17 +91,44 @@ ACTIVITY_ESSENTIAL_KEYS = {
     "polyline",
 }
 
-# Known datetime fields (ISO format with time) to convert to Python datetime
-# GMT fields will have UTC timezone attached; Local fields remain naive
-DATETIME_FIELDS_GMT = {
-    "startTimeGMT",
-    "measurementTimestampGMT",
+# GMT datetime fields to rename and convert to UTC timezone
+# Maps: original GMT field name -> new clean field name
+DATETIME_FIELDS_GMT_RENAME = {
+    # Core/Wellness
+    "startTimeGMT": "startTime",
+    "measurementTimestampGMT": "measurementTimestamp",
+    "wellnessStartTimeGmt": "wellnessStartTime",
+    "wellnessEndTimeGmt": "wellnessEndTime",
+    "lastSyncTimestampGMT": "lastSyncTimestamp",
+    "latestRespirationTimeGMT": "latestRespirationTime",
+    "latestSpo2ReadingTimeGmt": "latestSpo2ReadingTime",
+    # Body Battery nested events (handled separately)
+    "eventTimestampGmt": "eventTimestamp",
+    "eventStartTimeGmt": "eventStartTime",
+    "eventUpdateTimeGmt": "eventUpdateTime",
+    # HRV
+    "createTimeStamp": "createTimestamp",
 }
 
-DATETIME_FIELDS_LOCAL = {
+# Datetime fields that are already in a clean format (no rename needed, just parse)
+DATETIME_FIELDS_PARSE_UTC = {
+    "updateDate",
+    "createdDate",
+    "lastUpdated",
+}
+
+# Local datetime fields to DROP (we use GMT/UTC versions instead)
+DATETIME_FIELDS_LOCAL_DROP = {
     "startTimeLocal",
     "measurementTimestampLocal",
-    "bpMeasurementTime",
+    "wellnessStartTimeLocal",
+    "wellnessEndTimeLocal",
+    "latestSpo2ReadingTimeLocal",
+}
+
+# Local-only fields that have no GMT equivalent - keep as strings for attributes
+# (Sleep timestamps only exist as Local from Garmin API)
+DATETIME_FIELDS_LOCAL_KEEP_STRING = {
     "sleepStartTimestampLocal",
     "sleepEndTimestampLocal",
 }
@@ -110,61 +137,93 @@ DATETIME_FIELDS_LOCAL = {
 DATE_FIELDS = {
     "badgeEarnedDate",
     "calendarDate",
+    "lastMeasurementDate",
+}
+
+# Seconds fields to convert to minutes
+SECONDS_TO_MINUTES_FIELDS = {
+    "estimatedDurationInSecs": "estimatedDurationMinutes",
 }
 
 
 def _convert_datetime_fields(data: dict[str, Any]) -> dict[str, Any]:
-    """Convert ISO date/time strings to Python datetime/date objects.
+    """Convert and normalize datetime fields for Home Assistant.
 
-    This reduces boilerplate in Home Assistant integrations by providing
-    native Python types instead of strings.
-
-    - GMT fields get UTC timezone attached
-    - Local fields remain naive (wall-clock time in user's timezone)
+    - GMT fields: renamed to clean names (no 'GMT' suffix) with UTC timezone
+    - Parse-only fields: converted to datetime with UTC timezone
+    - Local fields with GMT equivalent: dropped (use UTC version instead)
+    - Local-only fields (sleep): kept as strings for use in attributes
+    - Date fields: converted to Python date objects
+    - Seconds fields: converted to minutes (integer)
     """
     from contextlib import suppress
 
     result = dict(data)
 
-    # GMT fields: parse and attach UTC timezone
-    for key in DATETIME_FIELDS_GMT:
+    # GMT fields: rename and attach UTC timezone
+    for old_key, new_key in DATETIME_FIELDS_GMT_RENAME.items():
+        if old_key in result and isinstance(result[old_key], str):
+            with suppress(ValueError):
+                parsed = datetime.fromisoformat(result[old_key])
+                # Attach UTC timezone if naive
+                if parsed.tzinfo is None:
+                    result[new_key] = parsed.replace(tzinfo=UTC)
+                else:
+                    result[new_key] = parsed
+            # Remove old GMT key
+            del result[old_key]
+
+    # Parse-only fields: keep name, add UTC timezone
+    for key in DATETIME_FIELDS_PARSE_UTC:
         if key in result and isinstance(result[key], str):
             with suppress(ValueError):
                 parsed = datetime.fromisoformat(result[key])
-                # Attach UTC timezone if naive
                 if parsed.tzinfo is None:
                     result[key] = parsed.replace(tzinfo=UTC)
                 else:
                     result[key] = parsed
 
-    # Local fields: keep naive (represents wall-clock time)
-    for key in DATETIME_FIELDS_LOCAL:
-        if key in result and isinstance(result[key], str):
-            with suppress(ValueError):
-                result[key] = datetime.fromisoformat(result[key])
+    # Drop Local fields that have GMT equivalents
+    for key in DATETIME_FIELDS_LOCAL_DROP:
+        result.pop(key, None)
 
+    # Date fields: convert to Python date
     for key in DATE_FIELDS:
         if key in result and isinstance(result[key], str):
             with suppress(ValueError):
                 result[key] = date.fromisoformat(result[key])
 
+    # Seconds to minutes conversion
+    for secs_key, mins_key in SECONDS_TO_MINUTES_FIELDS.items():
+        if secs_key in result and result[secs_key] is not None:
+            with suppress(TypeError):
+                result[mins_key] = round(result[secs_key] / 60)
+
+    # Handle durationInMilliseconds -> durationMinutes
+    if result.get("durationInMilliseconds"):
+        with suppress(TypeError):
+            result["durationMinutes"] = round(result["durationInMilliseconds"] / 60000)
+
+    # Note: DATETIME_FIELDS_LOCAL_KEEP_STRING are intentionally kept as strings
+
     return result
 
 
 def _trim_activity(activity: dict[str, Any]) -> dict[str, Any]:
-    """Trim activity to essential fields only to reduce data size."""
+    """Trim activity to essential fields only and convert datetime fields."""
     trimmed = {k: v for k, v in activity.items() if k in ACTIVITY_ESSENTIAL_KEYS}
     # Simplify activityType to just typeKey
     if "activityType" in trimmed and isinstance(trimmed["activityType"], dict):
         trimmed["activityType"] = trimmed["activityType"].get("typeKey", "unknown")
-    return trimmed
+    # Apply datetime conversion (rename GMT, drop Local)
+    return _convert_datetime_fields(trimmed)
 
 
-def _seconds_to_minutes(seconds: int | float | None) -> float | None:
-    """Convert seconds to minutes, rounded to 2 decimal places."""
+def _seconds_to_minutes(seconds: int | float | None) -> int | None:
+    """Convert seconds to minutes, rounded to nearest integer."""
     if seconds is None:
         return None
-    return round(seconds / 60, 2)
+    return round(seconds / 60)
 
 
 def _grams_to_kg(grams: int | float | None) -> float | None:
@@ -189,6 +248,8 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
         "lightSleepSeconds",
         "remSleepSeconds",
         "awakeSleepSeconds",
+        "napTimeSeconds",
+        "unmeasurableSleepSeconds",
         "sleepingSeconds",
         "measurableAsleepDuration",
         "measurableAwakeDuration",
@@ -197,7 +258,7 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
             minutes_key = key.replace("Seconds", "Minutes").replace(
                 "Duration", "DurationMinutes"
             )
-            result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
+            result[minutes_key] = _seconds_to_minutes(result.get(key))
 
     # === Stress: seconds → minutes ===
     for key in [
@@ -212,19 +273,19 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
     ]:
         if key in result:
             minutes_key = key.replace("Duration", "Minutes")
-            result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
+            result[minutes_key] = _seconds_to_minutes(result.get(key))
 
     # === Activity: seconds → minutes ===
     for key in ["activeSeconds", "highlyActiveSeconds", "sedentarySeconds"]:
         if key in result:
             minutes_key = key.replace("Seconds", "Minutes")
-            result[minutes_key] = _seconds_to_minutes(result.get(key, 0))
+            result[minutes_key] = _seconds_to_minutes(result.get(key))
 
     # === Weight: grams → kg ===
     for key in ["weight", "boneMass", "muscleMass"]:
         if key in result:
             kg_key = f"{key}Kg"
-            result[kg_key] = _grams_to_kg(result.get(key, 0))
+            result[kg_key] = _grams_to_kg(result.get(key))
 
     # === HRV: flatten nested structure ===
     hrv = result.get("hrvStatus", {})
@@ -274,6 +335,22 @@ def _add_computed_fields(data: dict[str, Any]) -> dict[str, Any]:
         result["totalIntensityMinutes"] = (moderate or 0) + ((vigorous or 0) * 2)
     else:
         result["totalIntensityMinutes"] = None
+
+    # === Body Battery: convert nested event datetime fields ===
+    for event_key in [
+        "bodyBatteryDynamicFeedbackEvent",
+        "endOfDayBodyBatteryDynamicFeedbackEvent",
+    ]:
+        if event_key in result and isinstance(result[event_key], dict):
+            result[event_key] = _convert_datetime_fields(result[event_key])
+
+    # Handle bodyBatteryActivityEventList (list of events)
+    if "bodyBatteryActivityEventList" in result:
+        event_list = result.get("bodyBatteryActivityEventList", [])
+        if isinstance(event_list, list):
+            result["bodyBatteryActivityEventList"] = [
+                _convert_datetime_fields(e) for e in event_list if isinstance(e, dict)
+            ]
 
     # Convert ISO date/time strings to Python datetime/date objects
     return _convert_datetime_fields(result)
@@ -1485,6 +1562,8 @@ class GarminClient:
         light_sleep_seconds = None
         rem_sleep_seconds = None
         awake_sleep_seconds = None
+        nap_time_seconds = None
+        unmeasurable_sleep_seconds = None
 
         if sleep_data:
             try:
@@ -1497,6 +1576,8 @@ class GarminClient:
                 light_sleep_seconds = daily_sleep.get("lightSleepSeconds")
                 rem_sleep_seconds = daily_sleep.get("remSleepSeconds")
                 awake_sleep_seconds = daily_sleep.get("awakeSleepSeconds")
+                nap_time_seconds = daily_sleep.get("napTimeSeconds")
+                unmeasurable_sleep_seconds = daily_sleep.get("unmeasurableSleepSeconds")
             except (KeyError, TypeError):
                 pass
 
@@ -1512,6 +1593,8 @@ class GarminClient:
             "lightSleepSeconds": light_sleep_seconds,
             "remSleepSeconds": rem_sleep_seconds,
             "awakeSleepSeconds": awake_sleep_seconds,
+            "napTimeSeconds": nap_time_seconds,
+            "unmeasurableSleepSeconds": unmeasurable_sleep_seconds,
         }
         return _add_computed_fields(data)
 
@@ -1565,6 +1648,8 @@ class GarminClient:
         # Workouts
         workouts = await self._safe_call(self.get_workouts, 0, 10)
         workouts = workouts or []
+        # Apply datetime conversions to workouts
+        workouts = [_convert_datetime_fields(w) for w in workouts]
 
         # Trim activities to essential fields
         trimmed_activities = [_trim_activity(a) for a in (activities_by_date or [])]
