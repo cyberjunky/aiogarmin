@@ -204,8 +204,33 @@ class GarminAuth:
 
         return AuthResult(success=True)
 
-    def refresh_session(self) -> bool:
-        """Refreshing JWT theoretically requires full re-execution right now."""
+    async def refresh_session(self) -> bool:
+        """Refreshes the JWT_WEB and CSRF tokens automatically using secure tracking cookies."""
+        if not self.is_authenticated:
+            return False
+
+        try:
+            r_tok = self.cs.post(
+                f"{self._connect}/services/auth/token/di-oauth/refresh",
+                headers={
+                    "Accept": "application/json",
+                    "NK": "NT",
+                    "connect-csrf-token": self.csrf_token,
+                    "Referer": f"{self._connect}/modern/",
+                },
+                timeout=10,
+            )
+            if r_tok.status_code in (200, 201):
+                jwt_data = r_tok.json()
+                self.jwt_web = jwt_data.get("encryptedToken")
+                self.csrf_token = jwt_data.get("csrfToken")
+                self.cs.cookies.set(
+                    "JWT_WEB", self.jwt_web, domain=f".{self.domain}", path="/"
+                )
+                return True
+        except Exception:
+            pass
+
         return False
 
     def save_session(self, path: str | Path) -> None:
