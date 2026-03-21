@@ -1,12 +1,8 @@
 """Constants for aiogarmin."""
 
-# Garmin SSO URLs
-GARMIN_SSO_URL = "https://sso.garmin.com/sso"
-GARMIN_SSO_SIGNIN = f"{GARMIN_SSO_URL}/signin"
-GARMIN_SSO_MFA = f"{GARMIN_SSO_URL}/verifyMFA/loginEnterMfaCode"
-
-# Garmin Connect API URLs (using connectapi.garmin.com like garth does)
-GARMIN_CONNECT_API = "https://connectapi.garmin.com"
+# Garmin Connect base URLs
+GARMIN_CONNECT = "https://connect.garmin.com"
+GARMIN_CONNECT_API = f"{GARMIN_CONNECT}/gc-api"
 
 # User/Profile endpoints
 USER_PROFILE_URL = f"{GARMIN_CONNECT_API}/userprofile-service/socialProfile"
@@ -54,7 +50,6 @@ DEVICE_ALARMS_URL = f"{GARMIN_CONNECT_API}/device-service/devices/alarms"
 RESPIRATION_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/daily/respiration"
 SPO2_URL = f"{GARMIN_CONNECT_API}/wellness-service/wellness/dailySpo2"
 
-
 # Goals & Gamification endpoints
 GOALS_URL = f"{GARMIN_CONNECT_API}/goal-service/goal/goals"
 BADGES_URL = f"{GARMIN_CONNECT_API}/badge-service/badge/earned"
@@ -78,11 +73,15 @@ UPLOAD_URL = f"{GARMIN_CONNECT_API}/upload-service/upload"
 ACTIVITY_CREATE_URL = f"{GARMIN_CONNECT_API}/activity-service/activity"
 GEAR_LINK_URL = f"{GARMIN_CONNECT_API}/gear-service/gear/link"
 
-# Default headers
+# Default headers for cookie-based API auth
 DEFAULT_HEADERS = {
-    "User-Agent": "GCM-iOS-5.7.2.1",
+    "User-Agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+    ),
     "Accept": "application/json",
+    "NK": "NT",
 }
 
 # China domain
-GARMIN_CN_CONNECT_API = "https://connectapi.garmin.cn"
+GARMIN_CN_CONNECT_API = "https://connect.garmin.cn/gc-api"

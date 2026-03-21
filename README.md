@@ -4,9 +4,10 @@ Async Python client for Garmin Connect API, designed for Home Assistant integrat
 
 ## Features
 
-- **Fully async** using aiohttp
-- **MFA authentication** with retry support
-- **Token-based auth** - credentials used once, then tokens stored
+- **Fully async** and native React API compatible via `/gc-api/`
+- **Cloudflare & WAF Evasion** using perfectly spoofed TLS fingerprints securely backed by `curl_cffi`
+- **MFA authentication** with proxy-evasion support and Turnstile bypass
+- **JWT Token-based auth** - credentials logically map to `GARMIN-SSO-GUID` sessions natively and save permanently
 - **Websession injection** for Home Assistant compatibility
 - **Retry with backoff** for rate limits (429) and server errors (5xx)
 - **Midnight fallback** - automatically uses yesterday's data when today isn't ready yet
@@ -22,33 +23,40 @@ pip install aiogarmin
 ## Usage
 
 ```python
+import asyncio
 import aiohttp
+from datetime import date
 from aiogarmin import GarminClient, GarminAuth
 
-async with aiohttp.ClientSession() as session:
-    # Login with credentials (one-time)
-    auth = GarminAuth(session)
-    result = await auth.login("email@example.com", "password")
-    
-    if result.mfa_required:
-        # Handle MFA - supports retry with correct code
-        mfa_code = input("Enter MFA code: ")
-        result = await auth.complete_mfa(mfa_code)
-    
-    # Save tokens for future use
-    oauth1_token = auth.oauth1_token  # dict
-    oauth2_token = auth.oauth2_token  # dict
-    
-    # Use client for API calls
-    client = GarminClient(session, auth)
-    
-    # Coordinator-based fetch methods (recommended for HA)
-    core_data = await client.fetch_core_data()      # Steps, HR, sleep, stress
-    body_data = await client.fetch_body_data()      # Weight, body composition, fitness age
-    activity_data = await client.fetch_activity_data()  # Activities, workouts
-    training_data = await client.fetch_training_data()  # HRV, training status
-    goals_data = await client.fetch_goals_data()    # Goals, badges
-    gear_data = await client.fetch_gear_data()      # Gear, device alarms
+async def main():
+    async with aiohttp.ClientSession() as session:
+        # Initialize the modern JWT session architecture
+        auth = GarminAuth()
+        
+        # Load seamless session from disk to completely evade rate limits natively
+        if not auth.load_session(".garmin_tokens.json"):
+            # Execute Native Authenticator if no cached JWT_WEB context exists
+            await auth.login("email@example.com", "password")
+            
+            # Handle MFA securely natively
+            if not auth.is_authenticated:
+                mfa_code = input("Enter MFA code: ")
+                await auth.complete_mfa(mfa_code)
+                
+            # Permanently cache the native TLS & Cookie dictionaries to disk
+            auth.save_session(".garmin_tokens.json")
+        
+        # Initialize client connecting accurately to React gc-api routing
+        client = GarminClient(session, auth)
+        
+        today = date.today()
+        # Coordinator-based fetch methods natively pulling from React interface
+        core_data = await client.fetch_core_data(today)      # Steps, HR, sleep, stress
+        body_data = await client.fetch_body_data(today)      # Weight, body composition, fitness age
+        activity_data = await client.fetch_activity_data(today)  # Activities, workouts
+        training_data = await client.fetch_training_data(today)  # HRV, training status
+        goals_data = await client.fetch_goals_data()    # Goals, badges
+        gear_data = await client.fetch_gear_data()      # Gear, device alarms
 ```
 
 ## For Home Assistant
@@ -57,17 +65,19 @@ This library is designed to work with Home Assistant's websession and multi-coor
 
 ```python
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import json
 
 session = async_get_clientsession(hass)
 
-# Load stored token dicts from config entry
-oauth1_token = entry.data.get("oauth1_token")
-oauth2_token = entry.data.get("oauth2_token")
+# Load cached tokens from generic config entry natively
+auth = GarminAuth()
+auth.jwt_web = entry.data.get("jwt_web")
+auth.csrf_token = entry.data.get("csrf_token")
+auth.cs.cookies.update(entry.data.get("cookies", {}))
 
-auth = GarminAuth(session, oauth1_token=oauth1_token, oauth2_token=oauth2_token)
 client = GarminClient(session, auth)
 
-# Each coordinator fetches its own data
+# Each coordinator fetches its own data seamlessly routing to gc-api
 core_data = await client.fetch_core_data(target_date=date.today())
 body_data = await client.fetch_body_data(target_date=date.today())
 ```
@@ -77,7 +87,7 @@ body_data = await client.fetch_body_data(target_date=date.today())
 Optimized methods that group related API calls for Home Assistant coordinators:
 
 | Method | API Calls | Data Returned |
-|--------|-----------|---------------|
+| ------ | --------- | ------------- |
 | `fetch_core_data()` | 3 | Steps, distance, calories, HR, stress, sleep, body battery, SPO2 |
 | `fetch_body_data()` | 3 | Weight, BMI, body fat, hydration, fitness age |
 | `fetch_activity_data()` | 4+ | Activities, workouts, HR zones, polylines |
@@ -92,7 +102,7 @@ Optimized methods that group related API calls for Home Assistant coordinators:
 Low-level methods used by coordinator fetch methods (all return raw `dict` or `list[dict]`):
 
 | Method | Description |
-|--------|-------------|
+| ------ | ----------- |
 | `get_user_profile()` | User profile info |
 | `get_user_summary()` | Daily summary (steps, HR, stress, body battery) |
 | `get_daily_steps()` | Steps for date range |
@@ -122,7 +132,6 @@ Low-level methods used by coordinator fetch methods (all return raw `dict` or `l
 | `get_menstrual_data()` | Menstrual cycle data |
 | `get_menstrual_calendar()` | Menstrual calendar |
 
-
 ## Data Transformations
 
 The library automatically adds computed fields for convenience:
@@ -137,9 +146,9 @@ The library automatically adds computed fields for convenience:
 
 This library is inspired by and builds upon great work from:
 
-**[garth](https://github.com/matin/garth)** - Garmin SSO auth + Connect Python client
+**[garth](https://github.com/matin/garth)** - The original Garmin SSO auth & Connect Python client architecture.
 
-Special thanks to [Matin](https://github.com/matin) for the Garmin Connect authentication flow and making it available to the community.
+Special thanks to [Matin](https://github.com/matin) for paving the authentication flow and making it available to the community before the `/gc-api/` migration.
 
 ## License
 
