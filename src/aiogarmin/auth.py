@@ -1,4 +1,4 @@
-"""Garmin Connect authentication using native DI Bearer token + React /gc-api/ flow.
+"""Garmin Connect authentication using native DI Bearer tokens.
 
 Flow:
 1. Try multiple login strategies in order:
@@ -7,8 +7,7 @@ Flow:
    c. Mobile SSO with curl_cffi (Android WebView TLS)
    d. Mobile SSO with plain requests (last resort)
 2. Exchange CAS service ticket for native DI Bearer token via diauth.garmin.com.
-3. Fall back to JWT_WEB cookie auth if DI exchange fails.
-4. API requests use Bearer token directly against connectapi.garmin.com,
+3. API requests use Bearer token directly against connectapi.garmin.com,
    bypassing Cloudflare TLS inspection entirely.
 """
 
@@ -60,7 +59,6 @@ NATIVE_X_GARMIN_USER_AGENT = (
 )
 
 DI_TOKEN_URL = "https://diauth.garmin.com/di-oauth2-service/oauth/token"
-IT_TOKEN_URL = "https://services.garmin.com/api/oauth/token"
 DI_GRANT_TYPE = (
     "https://connectapi.garmin.com/di-oauth2-service/oauth/grant/service_ticket"
 )
@@ -68,11 +66,6 @@ DI_CLIENT_IDS = (
     "GARMIN_CONNECT_MOBILE_ANDROID_DI_2025Q2",
     "GARMIN_CONNECT_MOBILE_ANDROID_DI_2024Q4",
     "GARMIN_CONNECT_MOBILE_ANDROID_DI",
-)
-IT_CLIENT_IDS = (
-    "GARMIN_CONNECT_MOBILE_ANDROID_2025Q2",
-    "GARMIN_CONNECT_MOBILE_ANDROID_2024Q4",
-    "GARMIN_CONNECT_MOBILE_ANDROID",
 )
 
 
@@ -109,7 +102,7 @@ def _http_post(url: str, **kwargs: Any) -> Any:
 
 
 class GarminAuth:
-    """Authentication engine with DI Bearer token + JWT_WEB fallback."""
+    """Authentication engine using native DI Bearer tokens."""
 
     def __init__(self, domain: str = "garmin.com") -> None:
         self.domain = domain
@@ -117,69 +110,41 @@ class GarminAuth:
         self._connect = f"https://connect.{domain}"
         self._connectapi = f"https://connectapi.{domain}"
 
-        # Native DI Bearer tokens (primary auth)
+        # Native DI Bearer tokens
         self.di_token: str | None = None
         self.di_refresh_token: str | None = None
         self.di_client_id: str | None = None
-        self.it_token: str | None = None
-        self.it_refresh_token: str | None = None
-        self.it_client_id: str | None = None
 
-        # JWT_WEB cookie auth (fallback)
-        self.jwt_web: str | None = None
-        self.csrf_token: str | None = None
-        self._display_name: str | None = None
-
-        # curl_cffi session (used for login flows and JWT_WEB fallback API calls)
+        # curl_cffi session (used for login flows)
         self.cs: Any = cffi_requests.Session(impersonate="chrome")
 
         self._tokenstore_path: str | None = None
 
     @property
     def is_authenticated(self) -> bool:
-        return bool(self.di_token or self.jwt_web)
-
-    @property
-    def display_name(self) -> str | None:
-        return self._display_name
+        return bool(self.di_token)
 
     def get_api_headers(self) -> dict[str, str]:
-        """Headers for API requests — Bearer when DI token available, JWT_WEB otherwise."""
+        """Headers for API requests using DI Bearer token."""
         if not self.is_authenticated:
             raise GarminAuthError("Not authenticated")
 
-        if self.di_token:
-            return _native_headers(
-                {
-                    "Authorization": f"Bearer {self.di_token}",
-                    "Accept": "application/json",
-                }
-            )
-
-        # JWT_WEB fallback
-        headers: dict[str, str] = {
-            "Accept": "application/json",
-            "NK": "NT",
-            "Origin": self._connect,
-            "Referer": f"{self._connect}/modern/",
-            "DI-Backend": f"connectapi.{self.domain}",
-            "Cookie": f"JWT_WEB={self.jwt_web}",
-        }
-        if self.csrf_token:
-            headers["connect-csrf-token"] = str(self.csrf_token)
-        return headers
+        return _native_headers(
+            {
+                "Authorization": f"Bearer {self.di_token}",
+                "Accept": "application/json",
+            }
+        )
 
     def get_api_base_url(self) -> str:
-        """Base URL — connectapi.garmin.com for Bearer, connect.garmin.com/gc-api for JWT_WEB."""
-        if self.di_token:
-            return self._connectapi
-        return f"{self._connect}/gc-api"
+        """Base URL for API requests."""
+        return self._connectapi
 
     def _token_expires_soon(self) -> bool:
         """Check if the active token will expire within 15 minutes."""
         import time as _time
 
-        token = self.di_token or self.jwt_web
+        token = self.di_token
         if not token:
             return False
         try:
@@ -572,55 +537,8 @@ class GarminAuth:
     def _establish_session(
         self, ticket: str, sess: Any = None, service_url: str | None = None
     ) -> None:
-        """Consume a CAS service ticket — try native DI token exchange first,
-        fall back to JWT_WEB cookie auth.
-        """
-        try:
-            self._exchange_service_ticket(ticket, service_url=service_url)
-            return
-        except Exception as e:
-            _LOGGER.warning("DI token exchange failed (%s), falling back to JWT_WEB", e)
-
-        # Fallback: consume ticket via connect.garmin.com for JWT_WEB cookie
-        if sess is not None:
-            self.cs = sess
-
-        svc_url = service_url or MOBILE_SSO_SERVICE_URL
-        self.cs.get(
-            svc_url, params={"ticket": ticket}, allow_redirects=True, timeout=30
-        )
-
-        jwt_web = None
-        for c in self.cs.cookies.jar:
-            if c.name == "JWT_WEB":
-                jwt_web = c.value
-                break
-
-        if not jwt_web:
-            # Try the di-oauth refresh endpoint to get JWT_WEB
-            try:
-                r_tok = self.cs.post(
-                    f"{self._connect}/services/auth/token/di-oauth/refresh",
-                    headers={
-                        "Accept": "application/json",
-                        "NK": "NT",
-                        "Referer": f"{self._connect}/modern/",
-                    },
-                    timeout=10,
-                )
-                if r_tok.status_code in (200, 201):
-                    jwt_data = r_tok.json()
-                    self.jwt_web = jwt_data.get("encryptedToken")
-                    self.csrf_token = jwt_data.get("csrfToken")
-                    if self.jwt_web:
-                        self._display_name = "User"
-                        return
-            except Exception:
-                pass
-            raise GarminAuthError("JWT_WEB cookie not set after ticket consumption")
-
-        self.jwt_web = jwt_web
-        self._display_name = "User"
+        """Exchange a CAS service ticket for a DI Bearer token."""
+        self._exchange_service_ticket(ticket, service_url=service_url)
 
     def _exchange_service_ticket(
         self, ticket: str, service_url: str | None = None
@@ -681,37 +599,6 @@ class GarminAuth:
         self.di_token = di_token
         self.di_refresh_token = di_refresh
         self.di_client_id = di_client_id
-        self._display_name = "User"
-
-        # Exchange DI for IT token
-        it_candidates = self._it_client_id_candidates(di_client_id or DI_CLIENT_IDS[0])
-        for client_id in it_candidates:
-            r = _http_post(
-                f"{IT_TOKEN_URL}?grant_type=connect2_exchange",
-                headers=_native_headers(
-                    {
-                        "Accept": "application/json,text/plain,*/*",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    }
-                ),
-                data={
-                    "client_id": client_id,
-                    "connect_access_token": di_token,
-                },
-                timeout=30,
-            )
-            if not r.ok:
-                _LOGGER.debug("IT exchange failed for %s: %s", client_id, r.status_code)
-                continue
-            try:
-                data = r.json()
-                self.it_token = data["access_token"]
-                self.it_refresh_token = data.get("refresh_token")
-                self.it_client_id = client_id
-                break
-            except Exception as e:
-                _LOGGER.debug("IT token parse failed for %s: %s", client_id, e)
-                continue
 
     def _extract_client_id_from_jwt(self, token: str) -> str | None:
         try:
@@ -724,20 +611,6 @@ class GarminAuth:
             return str(value) if value else None
         except Exception:
             return None
-
-    def _it_client_id_candidates(self, di_client_id: str) -> tuple[str, ...]:
-        derived = (
-            di_client_id.replace("_DI_", "_")
-            if "_DI_" in di_client_id
-            else (
-                di_client_id[:-3] if di_client_id.endswith("_DI") else IT_CLIENT_IDS[0]
-            )
-        )
-        seen: list[str] = []
-        for v in [self.it_client_id, derived, *IT_CLIENT_IDS]:
-            if v and v not in seen:
-                seen.append(v)
-        return tuple(seen)
 
     # -- TOKEN REFRESH --
 
@@ -774,60 +647,18 @@ class GarminAuth:
         )
 
     async def refresh_session(self) -> bool:
-        """Refresh auth tokens — DI token refresh or JWT_WEB CAS fallback."""
+        """Refresh DI Bearer token using the stored refresh token."""
         if not self.is_authenticated:
             return False
 
-        if self.di_token:
-            try:
-                self._refresh_di_token()
-                if self._tokenstore_path:
-                    with contextlib.suppress(Exception):
-                        self.save_session(self._tokenstore_path)
-                return True
-            except Exception as err:
-                _LOGGER.debug("DI token refresh failed: %s", err)
-            return False
-
-        # JWT_WEB fallback: try CAS TGT refresh
         try:
-            self.cs.get(
-                f"{self._sso}/mobile/sso/en_US/sign-in",
-                params={
-                    "clientId": MOBILE_SSO_CLIENT_ID,
-                    "service": MOBILE_SSO_SERVICE_URL,
-                },
-                allow_redirects=True,
-                timeout=15,
-            )
-            for c in self.cs.cookies.jar:
-                if c.name == "JWT_WEB":
-                    self.jwt_web = c.value
-                    _LOGGER.debug("Session refreshed via CAS TGT")
-                    if self._tokenstore_path:
-                        with contextlib.suppress(Exception):
-                            self.save_session(self._tokenstore_path)
-                    return True
-
-            # Try di-oauth refresh endpoint
-            r_tok = self.cs.post(
-                f"{self._connect}/services/auth/token/di-oauth/refresh",
-                headers={
-                    "Accept": "application/json",
-                    "NK": "NT",
-                    "connect-csrf-token": self.csrf_token,
-                    "Referer": f"{self._connect}/modern/",
-                },
-                timeout=10,
-            )
-            if r_tok.status_code in (200, 201):
-                jwt_data = r_tok.json()
-                self.jwt_web = jwt_data.get("encryptedToken")
-                self.csrf_token = jwt_data.get("csrfToken")
-                return bool(self.jwt_web)
+            self._refresh_di_token()
+            if self._tokenstore_path:
+                with contextlib.suppress(Exception):
+                    self.save_session(self._tokenstore_path)
+            return True
         except Exception as err:
-            _LOGGER.debug("JWT_WEB refresh failed: %s", err)
-
+            _LOGGER.debug("DI token refresh failed: %s", err)
         return False
 
     # -- SESSION PERSISTENCE --
@@ -838,16 +669,13 @@ class GarminAuth:
             return
 
         data: dict[str, Any] = {
-            "di_token": self.di_token,
-            "di_refresh_token": self.di_refresh_token,
-            "di_client_id": self.di_client_id,
-            "it_token": self.it_token,
-            "it_refresh_token": self.it_refresh_token,
-            "it_client_id": self.it_client_id,
-            "jwt_web": self.jwt_web,
-            "csrf_token": self.csrf_token,
-            "display_name": self._display_name,
-            "cookies": {c.name: c.value for c in self.cs.cookies.jar},
+            k: v
+            for k, v in {
+                "di_token": self.di_token,
+                "di_refresh_token": self.di_refresh_token,
+                "di_client_id": self.di_client_id,
+            }.items()
+            if v is not None
         }
 
         p = Path(path).expanduser()
@@ -870,27 +698,9 @@ class GarminAuth:
             self.di_token = data.get("di_token")
             self.di_refresh_token = data.get("di_refresh_token")
             self.di_client_id = data.get("di_client_id")
-            self.it_token = data.get("it_token")
-            self.it_refresh_token = data.get("it_refresh_token")
-            self.it_client_id = data.get("it_client_id")
-            self.jwt_web = data.get("jwt_web")
-            self.csrf_token = data.get("csrf_token")
-            self._display_name = data.get("display_name")
 
             if not self.is_authenticated:
                 return False
-
-            # Restore cookies (only needed for JWT_WEB fallback path)
-            if not self.di_token:
-                sso_cookies = {"CASTGC", "CASRMC", "CASMFA", "SESSION", "__VCAP_ID__"}
-                connect_cookies = {"JWT_WEB", "session", "__cflb"}
-                for k, v in data.get("cookies", {}).items():
-                    if k in sso_cookies:
-                        self.cs.cookies.set(k, v, domain=f"sso.{self.domain}")
-                    elif k in connect_cookies:
-                        self.cs.cookies.set(k, v, domain=f".connect.{self.domain}")
-                    else:
-                        self.cs.cookies.set(k, v, domain=f".{self.domain}")
 
             # Proactively refresh if token is expiring soon
             if self.di_refresh_token and self._token_expires_soon():

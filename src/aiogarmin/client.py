@@ -379,21 +379,10 @@ class GarminClient:
         self._profile_cache: UserProfile | None = None
 
     def _get_url(self, url: str) -> str:
-        """Get URL with correct base domain and auth type.
-
-        When using DI Bearer token, route directly to connectapi.garmin.com
-        (bypasses Cloudflare). When using JWT_WEB fallback, keep the
-        connect.garmin.com/gc-api proxy path.
-        """
-        if self._is_cn:
-            url = url.replace(GARMIN_CONNECT_API, GARMIN_CN_CONNECT_API)
-
-        if self._auth.di_token:
-            domain = "garmin.cn" if self._is_cn else "garmin.com"
-            base = GARMIN_CN_CONNECT_API if self._is_cn else GARMIN_CONNECT_API
-            url = url.replace(base, f"https://connectapi.{domain}")
-
-        return url
+        """Resolve URL to correct connectapi domain."""
+        base = GARMIN_CN_CONNECT_API if self._is_cn else GARMIN_CONNECT_API
+        domain = "garmin.cn" if self._is_cn else "garmin.com"
+        return url.replace(base, f"https://connectapi.{domain}")
 
     async def _request(
         self,
@@ -404,9 +393,8 @@ class GarminClient:
     ) -> dict[str, Any] | list[Any]:
         """Make authenticated API request (in thread).
 
-        When DI Bearer token is available, uses a plain requests.Session against
-        connectapi.garmin.com directly (no Cloudflare). Falls back to curl_cffi
-        session with JWT_WEB cookie via connect.garmin.com/gc-api proxy.
+        Uses a plain requests.Session against connectapi.garmin.com directly
+        with DI Bearer token auth (bypasses Cloudflare).
 
         Retries up to 3 times for:
         - 429 (Too Many Requests) - rate limited
@@ -430,19 +418,12 @@ class GarminClient:
         headers = self._auth.get_api_headers()
 
         def _do_request() -> Any:
-            if self._auth.di_token:
-                # Direct API call with Bearer — fresh session, no curl_cffi needed
-                sess = stdlib_requests.Session()
-                adapter = stdlib_requests.adapters.HTTPAdapter(
-                    pool_connections=20, pool_maxsize=20
-                )
-                sess.mount("https://", adapter)
-                return sess.request(
-                    method, url, params=params, headers=headers, timeout=15
-                )
-            return self._auth.cs.request(
-                method, url, params=params, headers=headers, timeout=15
+            sess = stdlib_requests.Session()
+            adapter = stdlib_requests.adapters.HTTPAdapter(
+                pool_connections=20, pool_maxsize=20
             )
+            sess.mount("https://", adapter)
+            return sess.request(method, url, params=params, headers=headers, timeout=15)
 
         try:
             response = await asyncio.to_thread(_do_request)
