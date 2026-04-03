@@ -8,26 +8,94 @@ from aiogarmin import GarminAuth, GarminAuthError
 class TestGarminAuth:
     """Tests for GarminAuth class."""
 
-    async def test_init(self, session):
+    async def test_init(self):
         """Test auth initialization."""
-        auth = GarminAuth(session)
-        assert auth.oauth1_token is None
-        assert auth.oauth2_token is None
+        auth = GarminAuth()
+        assert auth.di_token is None
+        assert auth.jwt_web is None
         assert not auth.is_authenticated
 
-    async def test_init_with_tokens(self, session):
-        """Test auth initialization with existing tokens."""
-        auth = GarminAuth(
-            session,
-            oauth1_token="token1",
-            oauth2_token="token2",
-        )
-        assert auth.oauth1_token == "token1"
-        assert auth.oauth2_token == "token2"
+    async def test_is_authenticated_with_di_token(self):
+        """Test is_authenticated is True when DI token is set."""
+        auth = GarminAuth()
+        auth.di_token = "fake_di_token"
         assert auth.is_authenticated
 
-    async def test_refresh_without_token(self, session):
-        """Test refresh fails without OAuth1 token."""
-        auth = GarminAuth(session)
-        with pytest.raises(GarminAuthError, match="No OAuth1 token"):
-            await auth.refresh()
+    async def test_is_authenticated_with_jwt_web(self):
+        """Test is_authenticated is True when JWT_WEB is set."""
+        auth = GarminAuth()
+        auth.jwt_web = "fake_jwt"
+        assert auth.is_authenticated
+
+    async def test_get_api_headers_not_authenticated(self):
+        """Test get_api_headers raises when not authenticated."""
+        auth = GarminAuth()
+        with pytest.raises(GarminAuthError, match="Not authenticated"):
+            auth.get_api_headers()
+
+    async def test_get_api_headers_bearer(self):
+        """Test get_api_headers returns Bearer header when DI token set."""
+        auth = GarminAuth()
+        auth.di_token = "mytoken"
+        headers = auth.get_api_headers()
+        assert headers["Authorization"] == "Bearer mytoken"
+
+    async def test_get_api_headers_jwt_fallback(self):
+        """Test get_api_headers returns JWT_WEB cookie when no DI token."""
+        auth = GarminAuth()
+        auth.jwt_web = "myjwt"
+        auth.csrf_token = "mycsrf"
+        headers = auth.get_api_headers()
+        assert "JWT_WEB=myjwt" in headers["Cookie"]
+        assert headers["connect-csrf-token"] == "mycsrf"
+
+    async def test_get_api_base_url_di(self):
+        """Test get_api_base_url returns connectapi when DI token set."""
+        auth = GarminAuth()
+        auth.di_token = "mytoken"
+        assert "connectapi.garmin.com" in auth.get_api_base_url()
+
+    async def test_get_api_base_url_jwt(self):
+        """Test get_api_base_url returns gc-api when only JWT_WEB set."""
+        auth = GarminAuth()
+        auth.jwt_web = "myjwt"
+        assert "gc-api" in auth.get_api_base_url()
+
+    async def test_refresh_session_not_authenticated(self):
+        """Test refresh_session returns False when not authenticated."""
+        auth = GarminAuth()
+        result = await auth.refresh_session()
+        assert result is False
+
+    async def test_save_load_session(self, tmp_path):
+        """Test round-trip save and load of tokens."""
+        token_file = tmp_path / "garmin_tokens.json"
+        auth = GarminAuth()
+        auth.di_token = "di_abc"
+        auth.di_refresh_token = "di_refresh"
+        auth.di_client_id = "GARMIN_CONNECT_MOBILE_ANDROID_DI_2025Q2"
+        auth._display_name = "TestUser"
+
+        auth.save_session(str(token_file))
+
+        auth2 = GarminAuth()
+        loaded = auth2.load_session(str(token_file))
+        assert loaded is True
+        assert auth2.di_token == "di_abc"
+        assert auth2.di_refresh_token == "di_refresh"
+        assert auth2.is_authenticated
+
+    async def test_load_session_missing_file(self, tmp_path):
+        """Test load_session returns False for missing file."""
+        auth = GarminAuth()
+        result = auth.load_session(str(tmp_path / "nonexistent.json"))
+        assert result is False
+
+    async def test_load_session_empty_tokens(self, tmp_path):
+        """Test load_session returns False when tokens are missing."""
+        import json
+        token_file = tmp_path / "garmin_tokens.json"
+        token_file.write_text(json.dumps({}))
+        auth = GarminAuth()
+        result = auth.load_session(str(token_file))
+        assert result is False

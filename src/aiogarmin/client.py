@@ -379,9 +379,20 @@ class GarminClient:
         self._profile_cache: UserProfile | None = None
 
     def _get_url(self, url: str) -> str:
-        """Get URL with correct base domain."""
+        """Get URL with correct base domain and auth type.
+
+        When using DI Bearer token, route directly to connectapi.garmin.com
+        (bypasses Cloudflare). When using JWT_WEB fallback, keep the
+        connect.garmin.com/gc-api proxy path.
+        """
         if self._is_cn:
-            return url.replace(GARMIN_CONNECT_API, GARMIN_CN_CONNECT_API)
+            url = url.replace(GARMIN_CONNECT_API, GARMIN_CN_CONNECT_API)
+
+        if self._auth.di_token:
+            domain = "garmin.cn" if self._is_cn else "garmin.com"
+            base = GARMIN_CN_CONNECT_API if self._is_cn else GARMIN_CONNECT_API
+            url = url.replace(base, f"https://connectapi.{domain}")
+
         return url
 
     async def _request(
@@ -391,16 +402,17 @@ class GarminClient:
         params: dict[str, Any] | None = None,
         _retry_count: int = 0,
     ) -> dict[str, Any] | list[Any]:
-        """Make authenticated API request via cloudscraper (in thread).
+        """Make authenticated API request (in thread).
 
-        Uses cloudscraper to bypass Cloudflare on connect.garmin.com.
-        Runs synchronous requests in a thread to keep async interface.
+        When DI Bearer token is available, uses a plain requests.Session against
+        connectapi.garmin.com directly (no Cloudflare). Falls back to curl_cffi
+        session with JWT_WEB cookie via connect.garmin.com/gc-api proxy.
 
         Retries up to 3 times for:
         - 429 (Too Many Requests) - rate limited
         - 5xx (Server errors) - temporary Garmin issues
         """
-        import asyncio
+        import requests as stdlib_requests
 
         MAX_RETRIES = 3
         RETRY_DELAYS = [1, 2, 4]
@@ -408,13 +420,29 @@ class GarminClient:
         if not self._auth.is_authenticated:
             raise GarminAuthError("Not authenticated")
 
-        # Apply CN domain if needed
+        # Proactively refresh if token is expiring soon
+        if self._auth._token_expires_soon():
+            _LOGGER.debug("Token expiring soon, refreshing proactively")
+            await self._auth.refresh_session()
+
+        # Apply CN domain + DI token URL routing
         url = self._get_url(url)
         headers = self._auth.get_api_headers()
-        cs = self._auth.cs
 
-        def _do_request():
-            return cs.request(method, url, params=params, headers=headers, timeout=15)
+        def _do_request() -> Any:
+            if self._auth.di_token:
+                # Direct API call with Bearer — fresh session, no curl_cffi needed
+                sess = stdlib_requests.Session()
+                adapter = stdlib_requests.adapters.HTTPAdapter(
+                    pool_connections=20, pool_maxsize=20
+                )
+                sess.mount("https://", adapter)
+                return sess.request(
+                    method, url, params=params, headers=headers, timeout=15
+                )
+            return self._auth.cs.request(
+                method, url, params=params, headers=headers, timeout=15
+            )
 
         try:
             response = await asyncio.to_thread(_do_request)
@@ -422,9 +450,10 @@ class GarminClient:
             # Handle 401 - session expired, try refresh
             if response.status_code == 401:
                 _LOGGER.debug("Session expired, refreshing")
-                refreshed = self._auth.refresh_session()
+                refreshed = await self._auth.refresh_session()
                 if not refreshed:
                     raise GarminAuthError("Session expired, re-login required")
+                headers = self._auth.get_api_headers()
                 response = await asyncio.to_thread(_do_request)
                 if response.status_code not in (200, 204, 404):
                     raise GarminAPIError(
