@@ -776,13 +776,18 @@ class GarminAuth:
         if not self.is_authenticated:
             return
 
+        cookies = {c.name: c.value for c in self.cs.cookies.jar}
         data: dict[str, Any] = {
-            "di_token": self.di_token,
-            "di_refresh_token": self.di_refresh_token,
-            "di_client_id": self.di_client_id,
-            "jwt_web": self.jwt_web,
-            "csrf_token": self.csrf_token,
-            "cookies": {c.name: c.value for c in self.cs.cookies.jar},
+            k: v
+            for k, v in {
+                "di_token": self.di_token,
+                "di_refresh_token": self.di_refresh_token,
+                "di_client_id": self.di_client_id,
+                "jwt_web": self.jwt_web,
+                "csrf_token": self.csrf_token,
+                "cookies": cookies or None,
+            }.items()
+            if v is not None
         }
 
         p = Path(path).expanduser()
