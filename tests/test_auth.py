@@ -12,19 +12,12 @@ class TestGarminAuth:
         """Test auth initialization."""
         auth = GarminAuth()
         assert auth.di_token is None
-        assert auth.jwt_web is None
         assert not auth.is_authenticated
 
     async def test_is_authenticated_with_di_token(self):
         """Test is_authenticated is True when DI token is set."""
         auth = GarminAuth()
         auth.di_token = "fake_di_token"
-        assert auth.is_authenticated
-
-    async def test_is_authenticated_with_jwt_web(self):
-        """Test is_authenticated is True when JWT_WEB is set."""
-        auth = GarminAuth()
-        auth.jwt_web = "fake_jwt"
         assert auth.is_authenticated
 
     async def test_get_api_headers_not_authenticated(self):
@@ -40,26 +33,10 @@ class TestGarminAuth:
         headers = auth.get_api_headers()
         assert headers["Authorization"] == "Bearer mytoken"
 
-    async def test_get_api_headers_jwt_fallback(self):
-        """Test get_api_headers returns JWT_WEB cookie when no DI token."""
+    async def test_get_api_base_url(self):
+        """Test get_api_base_url returns connectapi.garmin.com."""
         auth = GarminAuth()
-        auth.jwt_web = "myjwt"
-        auth.csrf_token = "mycsrf"
-        headers = auth.get_api_headers()
-        assert "JWT_WEB=myjwt" in headers["Cookie"]
-        assert headers["connect-csrf-token"] == "mycsrf"
-
-    async def test_get_api_base_url_di(self):
-        """Test get_api_base_url returns connectapi when DI token set."""
-        auth = GarminAuth()
-        auth.di_token = "mytoken"
         assert "connectapi.garmin.com" in auth.get_api_base_url()
-
-    async def test_get_api_base_url_jwt(self):
-        """Test get_api_base_url returns gc-api when only JWT_WEB set."""
-        auth = GarminAuth()
-        auth.jwt_web = "myjwt"
-        assert "gc-api" in auth.get_api_base_url()
 
     async def test_refresh_session_not_authenticated(self):
         """Test refresh_session returns False when not authenticated."""
@@ -74,7 +51,6 @@ class TestGarminAuth:
         auth.di_token = "di_abc"
         auth.di_refresh_token = "di_refresh"
         auth.di_client_id = "GARMIN_CONNECT_MOBILE_ANDROID_DI_2025Q2"
-        auth._display_name = "TestUser"
 
         auth.save_session(str(token_file))
 
