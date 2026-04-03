@@ -412,7 +412,7 @@ class GarminClient:
         - 429 (Too Many Requests) - rate limited
         - 5xx (Server errors) - temporary Garmin issues
         """
-        import requests as stdlib_requests  # type: ignore[import-untyped]
+        import requests as stdlib_requests
 
         MAX_RETRIES = 3
         RETRY_DELAYS = [1, 2, 4]

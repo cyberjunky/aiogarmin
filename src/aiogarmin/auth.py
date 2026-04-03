@@ -21,11 +21,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import requests as stdlib_requests  # type: ignore[import-untyped]
+import requests as stdlib_requests
 from curl_cffi import requests as cffi_requests
 
 try:
-    from ua_generator import generate as _generate_ua  # type: ignore[import-untyped]
+    from ua_generator import generate as _generate_ua
 
     HAS_UA_GEN = True
 except ImportError:
