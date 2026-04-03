@@ -21,7 +21,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import requests as stdlib_requests
+import requests as stdlib_requests  # type: ignore[import-untyped]
 from curl_cffi import requests as cffi_requests
 
 try:
@@ -103,9 +103,9 @@ def _random_browser_headers() -> dict[str, str]:
     return {"User-Agent": DESKTOP_USER_AGENT}
 
 
-def _http_post(url: str, **kwargs: Any) -> stdlib_requests.Response:
+def _http_post(url: str, **kwargs: Any) -> Any:
     """POST using curl_cffi TLS impersonation."""
-    return cffi_requests.post(url, impersonate="chrome", **kwargs)  # type: ignore[return-value]
+    return cffi_requests.post(url, impersonate="chrome", **kwargs)
 
 
 class GarminAuth:
@@ -232,7 +232,7 @@ class GarminAuth:
         for imp in impersonations:
             try:
                 _LOGGER.debug("Trying portal+cffi with impersonation=%s", imp)
-                sess: Any = cffi_requests.Session(impersonate=imp)
+                sess: Any = cffi_requests.Session(impersonate=imp)  # type: ignore[arg-type]
                 return self._portal_web_login(sess, email, password)
             except (GarminAuthError, GarminMFARequired):
                 raise
