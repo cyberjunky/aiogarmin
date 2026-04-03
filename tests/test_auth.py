@@ -94,6 +94,7 @@ class TestGarminAuth:
     async def test_load_session_empty_tokens(self, tmp_path):
         """Test load_session returns False when tokens are missing."""
         import json
+
         token_file = tmp_path / "garmin_tokens.json"
         token_file.write_text(json.dumps({}))
         auth = GarminAuth()

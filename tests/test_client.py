@@ -142,10 +142,12 @@ class TestGarminClient:
         }
 
         responses = [
-            _mock_response(profile_payload),  # get_user_profile (1st call, cached after)
+            _mock_response(
+                profile_payload
+            ),  # get_user_profile (1st call, cached after)
             _mock_response(summary_payload),  # _get_user_summary_raw
-            _mock_response(steps_payload),    # get_daily_steps
-            _mock_response(sleep_payload),    # _get_sleep_data_raw (profile cached)
+            _mock_response(steps_payload),  # get_daily_steps
+            _mock_response(sleep_payload),  # _get_sleep_data_raw (profile cached)
         ]
 
         with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
@@ -179,11 +181,15 @@ class TestGarminClient:
             _mock_response({"id": 1, "profileId": 2, "displayName": "user"}),
         ]
 
-        with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread, \
-             patch("asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
             mock_thread.side_effect = responses
-            with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread2, \
-                 patch("asyncio.sleep", new_callable=AsyncMock):
+            with (
+                patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread2,
+                patch("asyncio.sleep", new_callable=AsyncMock),
+            ):
                 mock_thread2.side_effect = responses
                 # Just verify no exception on single retry
                 pass

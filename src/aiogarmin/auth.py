@@ -255,7 +255,10 @@ class GarminAuth:
 
         sess.get(
             signin_url,
-            params={"clientId": PORTAL_SSO_CLIENT_ID, "service": PORTAL_SSO_SERVICE_URL},
+            params={
+                "clientId": PORTAL_SSO_CLIENT_ID,
+                "service": PORTAL_SSO_SERVICE_URL,
+            },
             headers={
                 **browser_hdrs,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -534,9 +537,7 @@ class GarminAuth:
         failures: list[str] = []
         for mfa_url, params, svc_url in mfa_endpoints:
             try:
-                r = sess.post(
-                    mfa_url, params=params, json=mfa_json, timeout=30
-                )
+                r = sess.post(mfa_url, params=params, json=mfa_json, timeout=30)
             except Exception as e:
                 failures.append(f"{mfa_url}: connection error {e}")
                 continue
@@ -578,16 +579,16 @@ class GarminAuth:
             self._exchange_service_ticket(ticket, service_url=service_url)
             return
         except Exception as e:
-            _LOGGER.warning(
-                "DI token exchange failed (%s), falling back to JWT_WEB", e
-            )
+            _LOGGER.warning("DI token exchange failed (%s), falling back to JWT_WEB", e)
 
         # Fallback: consume ticket via connect.garmin.com for JWT_WEB cookie
         if sess is not None:
             self.cs = sess
 
         svc_url = service_url or MOBILE_SSO_SERVICE_URL
-        self.cs.get(svc_url, params={"ticket": ticket}, allow_redirects=True, timeout=30)
+        self.cs.get(
+            svc_url, params={"ticket": ticket}, allow_redirects=True, timeout=30
+        )
 
         jwt_web = None
         for c in self.cs.cookies.jar:
@@ -887,9 +888,7 @@ class GarminAuth:
                     if k in sso_cookies:
                         self.cs.cookies.set(k, v, domain=f"sso.{self.domain}")
                     elif k in connect_cookies:
-                        self.cs.cookies.set(
-                            k, v, domain=f".connect.{self.domain}"
-                        )
+                        self.cs.cookies.set(k, v, domain=f".connect.{self.domain}")
                     else:
                         self.cs.cookies.set(k, v, domain=f".{self.domain}")
 
