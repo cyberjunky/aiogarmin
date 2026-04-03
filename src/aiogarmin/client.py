@@ -379,9 +379,20 @@ class GarminClient:
         self._profile_cache: UserProfile | None = None
 
     def _get_url(self, url: str) -> str:
-        """Get URL with correct base domain."""
+        """Get URL with correct base domain and auth type.
+
+        When using DI Bearer token, route directly to connectapi.garmin.com
+        (bypasses Cloudflare). When using JWT_WEB fallback, keep the
+        connect.garmin.com/gc-api proxy path.
+        """
         if self._is_cn:
-            return url.replace(GARMIN_CONNECT_API, GARMIN_CN_CONNECT_API)
+            url = url.replace(GARMIN_CONNECT_API, GARMIN_CN_CONNECT_API)
+
+        if self._auth.di_token:
+            domain = "garmin.cn" if self._is_cn else "garmin.com"
+            base = GARMIN_CN_CONNECT_API if self._is_cn else GARMIN_CONNECT_API
+            url = url.replace(base, f"https://connectapi.{domain}")
+
         return url
 
     async def _request(
@@ -391,123 +402,129 @@ class GarminClient:
         params: dict[str, Any] | None = None,
         _retry_count: int = 0,
     ) -> dict[str, Any] | list[Any]:
-        """Make authenticated API request with retry/backoff for rate limits and server errors.
+        """Make authenticated API request (in thread).
+
+        When DI Bearer token is available, uses a plain requests.Session against
+        connectapi.garmin.com directly (no Cloudflare). Falls back to curl_cffi
+        session with JWT_WEB cookie via connect.garmin.com/gc-api proxy.
 
         Retries up to 3 times for:
         - 429 (Too Many Requests) - rate limited
         - 5xx (Server errors) - temporary Garmin issues
         """
-        import asyncio
+        import requests as stdlib_requests
 
         MAX_RETRIES = 3
-        RETRY_DELAYS = [1, 2, 4]  # Exponential backoff in seconds
+        RETRY_DELAYS = [1, 2, 4]
 
-        if not self._auth.oauth2_token:
+        if not self._auth.is_authenticated:
             raise GarminAuthError("Not authenticated")
 
-        access_token = self._auth.oauth2_token.get("access_token", "")
-        if not access_token:
-            raise GarminAuthError("No access token in oauth2_token")
+        # Proactively refresh if token is expiring soon
+        if self._auth._token_expires_soon():
+            _LOGGER.debug("Token expiring soon, refreshing proactively")
+            await self._auth.refresh_session()
 
-        # Apply CN domain if needed
+        # Apply CN domain + DI token URL routing
         url = self._get_url(url)
+        headers = self._auth.get_api_headers()
 
-        headers = {
-            **DEFAULT_HEADERS,
-            "Authorization": f"Bearer {access_token}",
-        }
+        def _do_request() -> Any:
+            if self._auth.di_token:
+                # Direct API call with Bearer — fresh session, no curl_cffi needed
+                sess = stdlib_requests.Session()
+                adapter = stdlib_requests.adapters.HTTPAdapter(
+                    pool_connections=20, pool_maxsize=20
+                )
+                sess.mount("https://", adapter)
+                return sess.request(
+                    method, url, params=params, headers=headers, timeout=15
+                )
+            return self._auth.cs.request(
+                method, url, params=params, headers=headers, timeout=15
+            )
 
         try:
-            async with self._session.request(
-                method, url, params=params, headers=headers
-            ) as response:
-                # Handle 401 - token expired, refresh and retry once
-                if response.status == 401:
-                    _LOGGER.debug("Token expired, refreshing")
-                    await self._auth.refresh_tokens()
-                    new_token = self._auth.oauth2_token.get("access_token", "")
-                    headers["Authorization"] = f"Bearer {new_token}"
-                    async with self._session.request(
-                        method, url, params=params, headers=headers
-                    ) as retry_response:
-                        if retry_response.status not in (200, 204, 404):
-                            raise GarminAPIError(
-                                f"Request failed after token refresh: {retry_response.status}",
-                                retry_response.status,
-                            )
-                        if retry_response.status in (204, 404):
-                            _LOGGER.debug(
-                                "API %s returned %d", url, retry_response.status
-                            )
-                            return {}
-                        return await retry_response.json()
+            response = await asyncio.to_thread(_do_request)
 
-                # Handle 204 No Content
-                elif response.status == 204:
-                    _LOGGER.debug("API %s returned 204 No Content", url)
+            # Handle 401 - session expired, try refresh
+            if response.status_code == 401:
+                _LOGGER.debug("Session expired, refreshing")
+                refreshed = await self._auth.refresh_session()
+                if not refreshed:
+                    raise GarminAuthError("Session expired, re-login required")
+                headers = self._auth.get_api_headers()
+                response = await asyncio.to_thread(_do_request)
+                if response.status_code not in (200, 204, 404):
+                    raise GarminAPIError(
+                        f"Request failed after refresh: {response.status_code}",
+                        response.status_code,
+                    )
+                if response.status_code in (204, 404):
                     return {}
+                return response.json()
 
-                # Handle 404 - data not available
-                elif response.status == 404:
-                    _LOGGER.debug("API %s returned 404 - data not available", url)
-                    return {}
+            elif response.status_code == 204:
+                _LOGGER.debug("API %s returned 204 No Content", url)
+                return {}
 
-                # Handle 429 Rate Limit - retry with backoff
-                elif response.status == 429:
-                    if _retry_count < MAX_RETRIES:
-                        delay = RETRY_DELAYS[_retry_count]
-                        _LOGGER.warning(
-                            "Rate limited (429) on %s, retrying in %ds (attempt %d/%d)",
-                            url.split("/")[-1],
-                            delay,
-                            _retry_count + 1,
-                            MAX_RETRIES,
-                        )
-                        await asyncio.sleep(delay)
-                        return await self._request(
-                            method, url, params, _retry_count=_retry_count + 1
-                        )
-                    raise GarminAPIError(
-                        f"Rate limited after {MAX_RETRIES} retries",
-                        response.status,
+            elif response.status_code == 404:
+                _LOGGER.debug("API %s returned 404", url)
+                return {}
+
+            elif response.status_code == 429:
+                if _retry_count < MAX_RETRIES:
+                    delay = RETRY_DELAYS[_retry_count]
+                    _LOGGER.warning(
+                        "Rate limited (429) on %s, retry in %ds (%d/%d)",
+                        url.split("/")[-1],
+                        delay,
+                        _retry_count + 1,
+                        MAX_RETRIES,
                     )
-
-                # Handle 5xx Server Errors (502 Bad Gateway, 503, 504, etc.) - retry with backoff
-                elif 500 <= response.status < 600:
-                    if _retry_count < MAX_RETRIES:
-                        delay = RETRY_DELAYS[_retry_count]
-                        _LOGGER.warning(
-                            "Server error (%d) on %s, retrying in %ds (attempt %d/%d)",
-                            response.status,
-                            url.split("/")[-1],
-                            delay,
-                            _retry_count + 1,
-                            MAX_RETRIES,
-                        )
-                        await asyncio.sleep(delay)
-                        return await self._request(
-                            method, url, params, _retry_count=_retry_count + 1
-                        )
-                    raise GarminAPIError(
-                        f"Server error {response.status} after {MAX_RETRIES} retries",
-                        response.status,
+                    await asyncio.sleep(delay)
+                    return await self._request(
+                        method, url, params, _retry_count=_retry_count + 1
                     )
+                raise GarminAPIError(
+                    f"Rate limited after {MAX_RETRIES} retries", response.status_code
+                )
 
-                # Handle other non-200 errors
-                elif response.status != 200:
-                    text = await response.text()
-                    _LOGGER.debug(
-                        "API %s returned %d: %s", url, response.status, text[:200]
+            elif 500 <= response.status_code < 600:
+                if _retry_count < MAX_RETRIES:
+                    delay = RETRY_DELAYS[_retry_count]
+                    _LOGGER.warning(
+                        "Server error (%d) on %s, retry in %ds (%d/%d)",
+                        response.status_code,
+                        url.split("/")[-1],
+                        delay,
+                        _retry_count + 1,
+                        MAX_RETRIES,
                     )
-                    raise GarminAPIError(
-                        f"Request to {url} failed: {response.status}",
-                        response.status,
+                    await asyncio.sleep(delay)
+                    return await self._request(
+                        method, url, params, _retry_count=_retry_count + 1
                     )
+                raise GarminAPIError(
+                    f"Server error {response.status_code} after {MAX_RETRIES} retries",
+                    response.status_code,
+                )
 
-                # Success - return JSON response
-                result = await response.json()
-                _LOGGER.debug("API response from %s: %s", url, str(result)[:5000])
-                return result
+            elif response.status_code != 200:
+                _LOGGER.debug(
+                    "API %s returned %d: %s",
+                    url,
+                    response.status_code,
+                    response.text[:200],
+                )
+                raise GarminAPIError(
+                    f"Request to {url} failed: {response.status_code}",
+                    response.status_code,
+                )
+
+            result = response.json()
+            _LOGGER.debug("API response from %s: %s", url, str(result)[:5000])
+            return result
 
         except (GarminAPIError, GarminAuthError):
             raise
@@ -1011,7 +1028,7 @@ class GarminClient:
     ) -> dict[str, Any]:
         """Make authenticated POST request."""
 
-        headers = await self._auth.get_auth_headers()
+        headers = self._auth.get_api_headers()
         headers.update(DEFAULT_HEADERS)
         headers["Content-Type"] = "application/json"
 
@@ -1023,8 +1040,8 @@ class GarminClient:
         ) as response:
             if response.status == 401:
                 _LOGGER.debug("401 - attempting token refresh")
-                await self._auth.refresh()
-                headers = await self._auth.get_auth_headers()
+                await self._auth.refresh_session()
+                headers = self._auth.get_api_headers()
                 headers.update(DEFAULT_HEADERS)
                 headers["Content-Type"] = "application/json"
                 async with self._session.post(
@@ -1056,7 +1073,7 @@ class GarminClient:
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Make authenticated PUT request."""
-        headers = await self._auth.get_auth_headers()
+        headers = self._auth.get_api_headers()
         headers.update(DEFAULT_HEADERS)
         if json_data is not None:
             headers["Content-Type"] = "application/json"
@@ -1068,8 +1085,8 @@ class GarminClient:
             full_url, headers=headers, json=json_data
         ) as response:
             if response.status == 401:
-                await self._auth.refresh()
-                headers = await self._auth.get_auth_headers()
+                await self._auth.refresh_session()
+                headers = self._auth.get_api_headers()
                 headers.update(DEFAULT_HEADERS)
                 if json_data is not None:
                     headers["Content-Type"] = "application/json"
@@ -1092,7 +1109,7 @@ class GarminClient:
 
     async def _delete_request(self, url: str) -> dict[str, Any]:
         """Make a DELETE request to the Garmin API."""
-        headers = await self._auth.get_auth_headers()
+        headers = self._auth.get_api_headers()
         headers.update(DEFAULT_HEADERS)
 
         full_url = self._get_url(url)
@@ -1100,8 +1117,8 @@ class GarminClient:
 
         async with self._session.delete(full_url, headers=headers) as response:
             if response.status == 401:
-                await self._auth.refresh()
-                headers = await self._auth.get_auth_headers()
+                await self._auth.refresh_session()
+                headers = self._auth.get_api_headers()
                 headers.update(DEFAULT_HEADERS)
                 async with self._session.delete(
                     full_url, headers=headers
@@ -1131,7 +1148,7 @@ class GarminClient:
         """
         import aiohttp
 
-        headers = await self._auth.get_auth_headers()
+        headers = self._auth.get_api_headers()
         headers.update(DEFAULT_HEADERS)
         # Remove Content-Type - will be set by aiohttp for multipart
 
@@ -1152,8 +1169,8 @@ class GarminClient:
         ) as response:
             if response.status == 401:
                 # Retry after refresh
-                await self._auth.refresh()
-                headers = await self._auth.get_auth_headers()
+                await self._auth.refresh_session()
+                headers = self._auth.get_api_headers()
                 headers.update(DEFAULT_HEADERS)
                 async with self._session.post(
                     full_url, headers=headers, data=form_data
@@ -1409,7 +1426,7 @@ class GarminClient:
                 f"Allowed: {', '.join(allowed_formats)}"
             )
 
-        headers = await self._auth.get_auth_headers()
+        headers = self._auth.get_api_headers()
         # For multipart upload, only set User-Agent - let aiohttp handle Content-Type
         headers["User-Agent"] = "GCM-iOS-5.7.2.1"
 
@@ -1441,8 +1458,8 @@ class GarminClient:
             # Handle 403 by refreshing token and retrying
             if response.status == 403:
                 _LOGGER.debug("Upload got 403, refreshing token and retrying")
-                await self._auth.refresh()
-                headers = await self._auth.get_auth_headers()
+                await self._auth.refresh_session()
+                headers = self._auth.get_api_headers()
                 headers["User-Agent"] = "GCM-iOS-5.7.2.1"
                 data = FormData()
                 data.add_field(

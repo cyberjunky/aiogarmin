@@ -4,10 +4,11 @@ Async Python client for Garmin Connect API, designed for Home Assistant integrat
 
 ## Features
 
-- **Fully async** using aiohttp
-- **MFA authentication** with retry support
-- **Token-based auth** - credentials used once, then tokens stored
-- **Websession injection** for Home Assistant compatibility
+- **Fully async** using the native Garmin Connect API
+- **Robust authentication** with multiple login strategies and automatic fallback
+- **MFA support** with automatic endpoint fallback
+- **Token persistence** - save and restore sessions to avoid re-login
+- **Automatic token refresh** - proactively refreshes before expiry
 - **Retry with backoff** for rate limits (429) and server errors (5xx)
 - **Midnight fallback** - automatically uses yesterday's data when today isn't ready yet
 - **Coordinator-based fetch** - optimized data fetching for Home Assistant multi-coordinator pattern
@@ -19,55 +20,58 @@ Async Python client for Garmin Connect API, designed for Home Assistant integrat
 pip install aiogarmin
 ```
 
+Optional: install with improved browser UA generation:
+
+```bash
+pip install aiogarmin[ua]
+```
+
 ## Usage
 
 ```python
+import asyncio
 import aiohttp
+from datetime import date
 from aiogarmin import GarminClient, GarminAuth
 
-async with aiohttp.ClientSession() as session:
-    # Login with credentials (one-time)
-    auth = GarminAuth(session)
-    result = await auth.login("email@example.com", "password")
-    
-    if result.mfa_required:
-        # Handle MFA - supports retry with correct code
-        mfa_code = input("Enter MFA code: ")
-        result = await auth.complete_mfa(mfa_code)
-    
-    # Save tokens for future use
-    oauth1_token = auth.oauth1_token  # dict
-    oauth2_token = auth.oauth2_token  # dict
-    
-    # Use client for API calls
-    client = GarminClient(session, auth)
-    
-    # Coordinator-based fetch methods (recommended for HA)
-    core_data = await client.fetch_core_data()      # Steps, HR, sleep, stress
-    body_data = await client.fetch_body_data()      # Weight, body composition, fitness age
-    activity_data = await client.fetch_activity_data()  # Activities, workouts
-    training_data = await client.fetch_training_data()  # HRV, training status
-    goals_data = await client.fetch_goals_data()    # Goals, badges
-    gear_data = await client.fetch_gear_data()      # Gear, device alarms
+async def main():
+    async with aiohttp.ClientSession() as session:
+        auth = GarminAuth()
+
+        # Load saved session from disk
+        if not auth.load_session(".garmin_tokens.json"):
+            await auth.login("email@example.com", "password")
+
+            # Handle MFA if required
+            if not auth.is_authenticated:
+                mfa_code = input("Enter MFA code: ")
+                await auth.complete_mfa(mfa_code)
+
+            auth.save_session(".garmin_tokens.json")
+
+        client = GarminClient(session, auth)
+
+        today = date.today()
+        core_data     = await client.fetch_core_data(today)      # Steps, HR, sleep, stress
+        body_data     = await client.fetch_body_data(today)      # Weight, body composition, fitness age
+        activity_data = await client.fetch_activity_data(today)  # Activities, workouts
+        training_data = await client.fetch_training_data(today)  # HRV, training status
+        goals_data    = await client.fetch_goals_data()          # Goals, badges
+        gear_data     = await client.fetch_gear_data()           # Gear, device alarms
 ```
 
 ## For Home Assistant
-
-This library is designed to work with Home Assistant's websession and multi-coordinator pattern:
 
 ```python
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 session = async_get_clientsession(hass)
 
-# Load stored token dicts from config entry
-oauth1_token = entry.data.get("oauth1_token")
-oauth2_token = entry.data.get("oauth2_token")
+auth = GarminAuth()
+auth.load_session(config_dir / "garmin_tokens.json")
 
-auth = GarminAuth(session, oauth1_token=oauth1_token, oauth2_token=oauth2_token)
 client = GarminClient(session, auth)
 
-# Each coordinator fetches its own data
 core_data = await client.fetch_core_data(target_date=date.today())
 body_data = await client.fetch_body_data(target_date=date.today())
 ```
@@ -77,7 +81,7 @@ body_data = await client.fetch_body_data(target_date=date.today())
 Optimized methods that group related API calls for Home Assistant coordinators:
 
 | Method | API Calls | Data Returned |
-|--------|-----------|---------------|
+| ------ | --------- | ------------- |
 | `fetch_core_data()` | 3 | Steps, distance, calories, HR, stress, sleep, body battery, SPO2 |
 | `fetch_body_data()` | 3 | Weight, BMI, body fat, hydration, fitness age |
 | `fetch_activity_data()` | 4+ | Activities, workouts, HR zones, polylines |
@@ -89,10 +93,8 @@ Optimized methods that group related API calls for Home Assistant coordinators:
 
 ## Individual API Methods
 
-Low-level methods used by coordinator fetch methods (all return raw `dict` or `list[dict]`):
-
 | Method | Description |
-|--------|-------------|
+| ------ | ----------- |
 | `get_user_profile()` | User profile info |
 | `get_user_summary()` | Daily summary (steps, HR, stress, body battery) |
 | `get_daily_steps()` | Steps for date range |
@@ -122,7 +124,6 @@ Low-level methods used by coordinator fetch methods (all return raw `dict` or `l
 | `get_menstrual_data()` | Menstrual cycle data |
 | `get_menstrual_calendar()` | Menstrual calendar |
 
-
 ## Data Transformations
 
 The library automatically adds computed fields for convenience:
@@ -132,14 +133,6 @@ The library automatically adds computed fields for convenience:
 - **Weight**: `weight` (grams) → `weightKg`
 - **Stress**: `stressQualifier` → `stressQualifierText` (capitalized)
 - **Nested flattening**: HRV status, training readiness, scores
-
-## Acknowledgements
-
-This library is inspired by and builds upon great work from:
-
-**[garth](https://github.com/matin/garth)** - Garmin SSO auth + Connect Python client
-
-Special thanks to [Matin](https://github.com/matin) for the Garmin Connect authentication flow and making it available to the community.
 
 ## License
 

@@ -5,12 +5,18 @@ import pytest
 from aiogarmin import GarminAuth, GarminClient
 
 
+def _make_auth() -> GarminAuth:
+    auth = GarminAuth()
+    auth.di_token = "fake_di_token"
+    return auth
+
+
 class TestServiceMethods:
     """Tests for service-related client methods."""
 
     async def test_upload_activity_file_not_found(self, session):
         """Test upload_activity with non-existent file."""
-        auth = GarminAuth(session, oauth2_token="token")
+        auth = _make_auth()
         client = GarminClient(session, auth)
 
         with pytest.raises(FileNotFoundError):
@@ -18,11 +24,10 @@ class TestServiceMethods:
 
     async def test_upload_activity_invalid_format(self, session, tmp_path):
         """Test upload_activity with unsupported file format."""
-        # Create a temporary file with wrong extension
         test_file = tmp_path / "test.txt"
         test_file.write_text("test content")
 
-        auth = GarminAuth(session, oauth2_token="token")
+        auth = _make_auth()
         client = GarminClient(session, auth)
 
         with pytest.raises(ValueError, match="Invalid file format"):

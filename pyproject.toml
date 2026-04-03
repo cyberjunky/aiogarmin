@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aiogarmin"
-version = "0.1.4"
+version = "0.2.0"
 description = "Async Python client for Garmin Connect API"
 readme = "README.md"
 license = {text = "MIT"}
@@ -30,10 +30,14 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.8.0",
     "pydantic>=2.0.0",
-    "oauthlib>=3.2.0",
+    "curl_cffi>=0.7.4",
+    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
+ua = [
+    "ua-generator>=1.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -42,6 +46,7 @@ dev = [
     "aioresponses>=0.7.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "types-requests>=2.28.0",
     "build>=1.0.0",
     "twine>=4.0.0",
 ]

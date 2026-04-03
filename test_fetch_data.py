@@ -11,14 +11,13 @@ Tokens are saved to .garmin_tokens.json for subsequent runs.
 import asyncio
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from pprint import pprint
 
 import aiohttp
 
 from aiogarmin import GarminAuth, GarminClient
-
 
 # === CREDENTIALS ===
 # Set these via environment variables or edit directly
@@ -27,26 +26,6 @@ PASSWORD = os.getenv("GARMIN_PASSWORD", "your-password")
 
 # Token storage file
 TOKEN_FILE = Path(__file__).parent / ".garmin_tokens.json"
-
-
-def load_tokens() -> tuple[dict | None, dict | None]:
-    """Load saved tokens from file."""
-    if TOKEN_FILE.exists():
-        try:
-            with open(TOKEN_FILE) as f:
-                data = json.load(f)
-            print(f"Loaded tokens from {TOKEN_FILE}")
-            return data.get("oauth1"), data.get("oauth2")
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"Could not load tokens: {e}")
-    return None, None
-
-
-def save_tokens(oauth1: dict | None, oauth2: dict | None):
-    """Save tokens to file for reuse."""
-    with open(TOKEN_FILE, "w") as f:
-        json.dump({"oauth1": oauth1, "oauth2": oauth2}, f, indent=2)
-    print(f"Tokens saved to {TOKEN_FILE}")
 
 
 def json_serial(obj):
@@ -58,9 +37,9 @@ def json_serial(obj):
 
 def print_section(title: str, data: dict | list | None):
     """Pretty print a data section."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     if data is None:
         print("  (No data)")
     elif isinstance(data, dict):
@@ -83,52 +62,49 @@ def print_section(title: str, data: dict | list | None):
 
 async def main():
     """Fetch and display all data from aiogarmin."""
-    # Load saved tokens
-    oauth1_token, oauth2_token = load_tokens()
+    # Initialize new seamless JWT Token engine
+    auth = GarminAuth()
+
+    if auth.load_session(TOKEN_FILE):
+        print(f"Successfully loaded seamless JWT session from {TOKEN_FILE}")
+    else:
+        print("No valid session found, initiating native login...")
+        email = EMAIL
+        password = PASSWORD
+
+        if email == "your-email@example.com":
+            email = input("Garmin Email: ").strip()
+        if password == "your-password":
+            import getpass
+
+            password = getpass.getpass("Garmin Password: ")
+
+        print(f"Logging in as {email}...")
+
+        try:
+            from aiogarmin.exceptions import GarminMFARequired
+
+            await auth.login(email, password)
+        except GarminMFARequired:
+            print("MFA required!")
+            mfa_code = input("Enter MFA code: ").strip()
+            await auth.complete_mfa(mfa_code)
+        except Exception as e:
+            print(f"Login failed linearly: {e}")
+            print(
+                "Hint: If 429 Rate Limited, Garmin IP is locked. Wait or use the proxy bypass."
+            )
+            return
+
+        print("Seamless Login successful!")
+        auth.save_session(TOKEN_FILE)
+        print(f"Saved persistent auth state to {TOKEN_FILE}")
 
     async with aiohttp.ClientSession() as session:
-        # Initialize auth with saved tokens
-        auth = GarminAuth(
-            session,
-            oauth1_token=oauth1_token,
-            oauth2_token=oauth2_token,
-        )
-
-        # Login if no tokens
-        if not auth.oauth2_token:
-            # Get credentials interactively if not set
-            email = EMAIL
-            password = PASSWORD
-            
-            if email == "your-email@example.com":
-                email = input("Garmin Email: ").strip()
-            if password == "your-password":
-                import getpass
-                password = getpass.getpass("Garmin Password: ")
-            
-            print(f"Logging in as {email}...")
-            
-            try:
-                from aiogarmin.exceptions import GarminMFARequired
-                result = await auth.login(email, password)
-            except GarminMFARequired:
-                # MFA required - prompt for code
-                print("MFA required!")
-                mfa_code = input("Enter MFA code: ").strip()
-                result = await auth.complete_mfa(mfa_code)
-            
-            if not result.success:
-                print(f"Login failed: {result}")
-                return
-            print(f"Logged in as: {result.display_name}")
-            # Save tokens for next time
-            save_tokens(auth.oauth1_token, auth.oauth2_token)
-
-        # Create client
+        # Create client injecting the flawlessly hooked JWT Auth framework
         client = GarminClient(session, auth)
 
         today = date.today()
-        yesterday = today - timedelta(days=1)
 
         # === FETCH CORE DATA ===
         print("\n" + "=" * 60)
@@ -187,7 +163,7 @@ async def main():
         print("\n" + "=" * 60)
         print("  VALUES THAT ARE None (may need historical fetch)")
         print("=" * 60)
-        
+
         all_data = {
             "core": core_data,
             "activity": activity_data,
