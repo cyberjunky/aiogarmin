@@ -171,29 +171,6 @@ class TestGarminClient:
         assert data["napTimeMinutes"] == 60
         assert data["unmeasurableSleepMinutes"] == 10
 
-    async def test_request_retries_on_429(self, session):
-        """Test _request retries on 429 with backoff."""
-        auth = _make_auth()
-        client = GarminClient(session, auth)
-
-        responses = [
-            _mock_response({}, status=429),
-            _mock_response({"id": 1, "profileId": 2, "displayName": "user"}),
-        ]
-
-        with (
-            patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            mock_thread.side_effect = responses
-            with (
-                patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread2,
-                patch("asyncio.sleep", new_callable=AsyncMock),
-            ):
-                mock_thread2.side_effect = responses
-                # Just verify no exception on single retry
-                pass
-
     async def test_request_returns_empty_on_204(self, session):
         """Test _request returns empty dict on 204 No Content."""
         auth = _make_auth()
